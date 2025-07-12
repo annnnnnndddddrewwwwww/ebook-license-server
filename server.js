@@ -9,9 +9,9 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 // --- Configuración de CORS ---
-// Para producción, es MUY recomendable restringir 'origin' solo a la URL de tu ebook.
+// En producción, es MUY recomendable restringir 'origin' solo a la URL de tu ebook.
 // Ejemplo:
-// app.use(cors({ origin: 'https://tu-url-del-ebook.onrender.com' }));
+// app.use(cors({ origin: 'https://tu-ebook.onrender.com' }));
 // Para desarrollo y pruebas, permitimos cualquier origen:
 app.use(cors());
 app.use(express.json()); // Para parsear el body de las peticiones JSON
@@ -71,24 +71,23 @@ app.get('/licenses', (req, res) => {
 // --- Endpoint para el Generador de Licencias ---
 app.post('/generate-license', (req, res) => {
     const newLicenseKey = uuidv4(); // Genera un UUID v4 como licencia
-    // Obtiene maxUsagesPerIp del body, o usa un valor por defecto (ej. 1 para uso único)
-    const maxUsagesPerIp = req.body.maxUsagesPerIp ? parseInt(req.body.maxUsagesPerIp, 10) : 1;
+    // Obtiene maxUniqueIps del body, o usa un valor por defecto (ej. 1 para uso único por IP)
+    const maxUniqueIps = req.body.maxUniqueIps ? parseInt(req.body.maxUniqueIps, 10) : 1;
 
-    if (isNaN(maxUsagesPerIp) || maxUsagesPerIp < 1) {
-        return res.status(400).json({ success: false, message: "maxUsagesPerIp debe ser un número entero positivo." });
+    if (isNaN(maxUniqueIps) || maxUniqueIps < 1) {
+        return res.status(400).json({ success: false, message: "El límite de IPs únicas debe ser un número entero positivo." });
     }
 
     // Almacena la licencia con su estado inicial
     licenses.set(newLicenseKey, {
-        usedByIp: null,         // IP que ha usado la licencia por primera vez
-        usageCount: 0,          // Contador de usos por la misma IP
-        maxUsagesPerIp: maxUsagesPerIp, // Límite de usos para esta IP
-        lastUsed: null,         // Marca de tiempo del último uso
-        isValid: true           // Estado de validez de la licencia
+        activatedIps: [],     // Array de IPs únicas que han usado la licencia
+        maxUniqueIps: maxUniqueIps, // Límite de IPs únicas permitidas
+        lastUsed: null,       // Marca de tiempo del último uso (cualquier IP)
+        isValid: true         // Estado de validez de la licencia
     });
     saveLicenses(); // Guarda el estado actualizado
 
-    console.log(`Licencia generada y añadida: ${newLicenseKey} (Max Usos por IP: ${maxUsagesPerIp})`);
+    console.log(`Licencia generada y añadida: ${newLicenseKey} (Máx IPs únicas: ${maxUniqueIps})`);
     res.status(201).json({ success: true, license: newLicenseKey, message: "Licencia generada con éxito." });
 });
 
@@ -140,34 +139,34 @@ app.post('/validate-license', (req, res) => {
         return res.status(403).json({ valid: false, message: "Esta licencia ha sido invalidada y ya no es válida." });
     }
 
-    // Lógica para "solo se pueda utilizar N veces por IP"
-    if (licenseData.usedByIp === null) {
-        // Primera vez que se usa esta licencia
-        licenseData.usedByIp = clientIp;
-        licenseData.usageCount = 1;
-        licenseData.lastUsed = new Date().toISOString();
+    // Lógica para "N IPs diferentes pueden usar esta licencia, pero una vez activada por una IP,
+    // esa IP puede usarla indefinidamente."
+    const isIpAlreadyActivated = licenseData.activatedIps.includes(clientIp);
+
+    if (isIpAlreadyActivated) {
+        // La IP ya está en la lista de IPs activadas.
+        // Se permite el acceso sin restricciones adicionales para esta IP.
+        licenseData.lastUsed = new Date().toISOString(); // Actualiza el timestamp del último uso
         licenses.set(incomingLicenseKey, licenseData); // Actualiza el Map
         saveLicenses(); // Guarda el estado actualizado
-        console.log(`Licencia '${incomingLicenseKey}' activada por primera vez por IP: ${clientIp}. Usos: 1/${licenseData.maxUsagesPerIp}`);
-        return res.json({ valid: true, message: "Licencia válida y activada." });
-    } else if (licenseData.usedByIp === clientIp) {
-        // La licencia ya fue usada por esta misma IP
-        if (licenseData.usageCount < licenseData.maxUsagesPerIp) {
-            licenseData.usageCount++;
+        console.log(`Licencia '${incomingLicenseKey}' re-validada por IP: ${clientIp}. IPs únicas usadas: ${licenseData.activatedIps.length}/${licenseData.maxUniqueIps}`);
+        return res.json({ valid: true, message: "Licencia válida." });
+    } else {
+        // Es una IP nueva intentando usar esta licencia
+        if (licenseData.activatedIps.length < licenseData.maxUniqueIps) {
+            // Aún hay slots para IPs únicas. Añadir la nueva IP.
+            licenseData.activatedIps.push(clientIp);
             licenseData.lastUsed = new Date().toISOString(); // Actualiza el timestamp
             licenses.set(incomingLicenseKey, licenseData); // Actualiza el Map
             saveLicenses(); // Guarda el estado actualizado
-            console.log(`Licencia '${incomingLicenseKey}' re-validada por IP: ${clientIp}. Usos: ${licenseData.usageCount}/${licenseData.maxUsagesPerIp}`);
-            return res.json({ valid: true, message: "Licencia válida." });
+            console.log(`Licencia '${incomingLicenseKey}' activada por nueva IP: ${clientIp}. IPs únicas usadas: ${licenseData.activatedIps.length}/${licenseData.maxUniqueIps}`);
+            return res.json({ valid: true, message: "Licencia válida y activada para esta IP." });
         } else {
-            // La licencia ha alcanzado su límite de usos para esta IP
-            console.log(`Licencia '${incomingLicenseKey}' ha alcanzado su límite de usos (${licenseData.maxUsagesPerIp}) por IP: ${clientIp}`);
-            return res.status(403).json({ valid: false, message: `Esta licencia ha alcanzado su límite de ${licenseData.maxUsagesPerIp} usos para esta dirección IP.` });
+            // Se ha alcanzado el límite de IPs únicas para esta licencia.
+            // La nueva IP no puede usarla.
+            console.log(`Licencia '${incomingLicenseKey}' ha alcanzado su límite de ${licenseData.maxUniqueIps} IPs únicas. Intento de uso por IP: ${clientIp}`);
+            return res.status(403).json({ valid: false, message: `Esta licencia ya ha sido activada por su número máximo de ${licenseData.maxUniqueIps} IPs diferentes.` });
         }
-    } else {
-        // La licencia ya fue usada por OTRA IP
-        console.log(`Licencia '${incomingLicenseKey}' ya usada por IP: ${licenseData.usedByIp}. Intento de uso por IP: ${clientIp}`);
-        return res.status(403).json({ valid: false, message: "Esta licencia ya ha sido utilizada por otra dirección IP." });
     }
 });
 
