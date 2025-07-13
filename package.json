@@ -1,21 +1,16 @@
 {
-  "name": "license-server",
+  "name": "ebook-license-server",
   "version": "1.0.0",
-  "description": "Servidor para generar y validar licencias de ebook.",
+  "description": "Server for Ebook license validation and user data collection",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js"
+    "start": "node server.js"
   },
-  "keywords": ["license", "ebook", "nutrition", "onrender"],
-  "author": "Tu Nombre",
-  "license": "ISC",
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.19.2",
-    "uuid": "^10.0.0"
-  },
-  "devDependencies": {
-    "nodemon": "^3.1.4"
+    "googleapis": "^120.0.0",   
+    "uuid": "^10.0.0",
+    "dotenv": "^16.0.0"         
   }
 }
