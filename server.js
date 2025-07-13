@@ -8,12 +8,24 @@ const path = require('path');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// --- Configuración de CORS ---
+// --- Configuración de CORS (¡CORREGIDO!) ---
+// Configuración explícita de CORS para mayor robustez.
 // En producción, es MUY recomendable restringir 'origin' solo a la URL de tu ebook.
 // Ejemplo:
-// app.use(cors({ origin: 'https://tu-ebook.onrender.com' }));
-// Para desarrollo y pruebas, permitimos cualquier origen:
-app.use(cors());
+// const corsOptions = {
+//     origin: 'https://tu-usuario.github.io', // O el dominio exacto donde está tu ebook
+//     methods: ['GET', 'POST', 'PUT', 'DELETE'], // Métodos que tu API usará
+//     allowedHeaders: ['Content-Type', 'Authorization'], // Cabeceras permitidas
+//     credentials: true // Si necesitas manejar cookies o credenciales
+// };
+// app.use(cors(corsOptions));
+// Para desarrollo y pruebas, permitimos cualquier origen y métodos comunes:
+app.use(cors({
+    origin: '*', // Permite cualquier origen. CAMBIA ESTO PARA PRODUCCIÓN.
+    methods: ['GET', 'POST'], // Tu frontend solo usa POST para validar
+    allowedHeaders: ['Content-Type'] // Solo necesitas Content-Type para JSON
+}));
+
 app.use(express.json()); // Para parsear el body de las peticiones JSON
 
 // --- Configuración de Persistencia de Licencias ---
@@ -117,8 +129,8 @@ app.post('/invalidate-license', (req, res) => {
     res.json({ success: true, message: "Licencia invalidada con éxito." });
 });
 
-// --- Endpoint para la Validación de Licencias ---
-app.post('/validate-license', (req, res) => {
+// --- Endpoint para la Validación de Licencias (¡NOMBRE CORREGIDO!) ---
+app.post('/validate-and-register-license', (req, res) => { // <-- ¡CAMBIADO AQUÍ!
     const { license: incomingLicenseKey } = req.body;
     const clientIp = req.ip; // Obtiene la IP del cliente
 
@@ -172,7 +184,7 @@ app.post('/validate-license', (req, res) => {
 
 // Ruta de bienvenida (opcional, para verificar que el servidor está corriendo)
 app.get('/', (req, res) => {
-    res.send('Servidor de licencias de Ebook funcionando. Usa /generate-license para generar, /validate-license para validar, y /licenses para ver todas.');
+    res.send('Servidor de licencias de Ebook funcionando. Usa /generate-license para generar, /validate-and-register-license para validar, y /licenses para ver todas.');
 });
 
 // Iniciar el servidor
