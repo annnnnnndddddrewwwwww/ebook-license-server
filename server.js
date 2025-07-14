@@ -27,6 +27,9 @@ const USERS_SHEET_NAME = 'Users';       // Nombre de la pestaña para usuarios
 
 let sheets; // Variable global para el cliente de Google Sheets API
 
+// Variable para el estado del modo de mantenimiento (EN UN ENTORNO REAL, ESTO DEBERÍA PERSISTIR EN GOOGLE SHEETS O DB)
+let maintenanceMode = false; 
+
 // Función para autenticar y obtener el cliente de Google Sheets
 async function authenticateGoogleSheets() {
     try {
@@ -57,6 +60,87 @@ authenticateGoogleSheets();
 
 // --- Middleware para obtener la IP del cliente ---
 app.set('trust proxy', true); // Necesario para obtener la IP real detrás de un proxy (Render)
+
+// --- Middleware para el modo de mantenimiento (¡DEBE IR ANTES DE TODAS LAS DEMÁS RUTAS!) ---
+app.use((req, res, next) => {
+    // Si la solicitud es para cambiar o verificar el estado de mantenimiento, déjala pasar
+    if (req.path === '/set-maintenance-mode' || req.path === '/get-maintenance-status') {
+        return next();
+    }
+    
+    if (maintenanceMode) {
+        return res.status(503).send(`
+            <!DOCTYPE html>
+            <html lang="es">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Web en Mantenimiento</title>
+                <style>
+                    body {
+                        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                        text-align: center;
+                        padding-top: 80px;
+                        background-color: #f0f0f0;
+                        color: #333;
+                        display: flex;
+                        flex-direction: column;
+                        align-items: center;
+                        justify-content: center;
+                        min-height: 100vh;
+                        margin: 0;
+                    }
+                    .container {
+                        max-width: 700px;
+                        background-color: #ffffff;
+                        padding: 40px;
+                        border-radius: 12px;
+                        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+                        border: 2px solid #ffcc00;
+                    }
+                    .emoji-large {
+                        font-size: 150px;
+                        display: inline-block;
+                        animation: spin 2s linear infinite;
+                        margin-bottom: 20px;
+                    }
+                    .message {
+                        font-size: 28px;
+                        font-weight: bold;
+                        color: #e65100; /* Naranja oscuro */
+                        margin-bottom: 25px;
+                    }
+                    .warning-emoji {
+                        font-size: 30px;
+                        vertical-align: middle;
+                        margin: 0 10px;
+                    }
+                    p {
+                        font-size: 18px;
+                        color: #555;
+                    }
+                    @keyframes spin {
+                        0% { transform: rotate(0deg); }
+                        100% { transform: rotate(360deg); }
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="emoji-large">⚙️</div>
+                    <div class="message">
+                        <span class="warning-emoji">⚠️</span> ¡Web en Mantenimiento! <span class="warning-emoji">⚠️</span>
+                    </div>
+                    <p>Estamos realizando actualizaciones importantes para mejorar tu experiencia.</p>
+                    <p>Disculpa las molestias, estaremos de vuelta pronto.</p>
+                </div>
+            </body>
+            </html>
+        `);
+    }
+    next(); // Continuar con las rutas normales si no está en mantenimiento
+});
+
 
 // --- Funciones de Utilidad para Google Sheets ---
 
@@ -341,7 +425,7 @@ app.post('/collect-user-data', async (req, res) => {
             console.log(`Datos de usuario actualizados para ${userEmail}.`);
         } else {
             // Si el usuario no existe, inserta una nueva fila
-            await appendSheetRow(USERS_SHEET_NAME, userData);
+            await appendSheetRow(USERS_SHEETS_NAME, userData);
             console.log(`Nuevo usuario registrado: ${userEmail}.`);
         }
         
@@ -352,6 +436,26 @@ app.post('/collect-user-data', async (req, res) => {
         res.status(500).json({ success: false, message: "Error interno del servidor al registrar datos de usuario." });
     }
 });
+
+// --- NUEVO ENDPOINT: Establecer Modo de Mantenimiento ---
+app.post('/set-maintenance-mode', (req, res) => {
+    const { maintenanceMode: newState } = req.body;
+    if (typeof newState === 'boolean') {
+        maintenanceMode = newState; // Actualiza la variable en memoria
+        // En un entorno de producción, aquí deberías guardar 'newState' en tu Google Sheet o DB.
+        console.log(`Modo de mantenimiento cambiado a: ${maintenanceMode}`);
+        res.json({ success: true, message: `Modo de mantenimiento establecido a ${newState}` });
+    } else {
+        res.status(400).json({ success: false, message: "Parámetro 'maintenanceMode' inválido. Debe ser true o false." });
+    }
+});
+
+// --- NUEVO ENDPOINT: Obtener Estado de Modo de Mantenimiento ---
+app.get('/get-maintenance-status', (req, res) => {
+    res.json({ maintenanceMode: maintenanceMode }); // Retorna el estado actual en memoria
+    // En un entorno de producción, aquí deberías leer el estado desde tu Google Sheet o DB.
+});
+
 
 // Ruta de bienvenida (opcional, para verificar que el servidor está corriendo)
 app.get('/', (req, res) => {
