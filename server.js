@@ -24,10 +24,12 @@ const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n');
 
 const LICENSES_SHEET_NAME = 'Licenses'; // Nombre de la pestaña para licencias
 const USERS_SHEET_NAME = 'Users';       // Nombre de la pestaña para usuarios
+const APP_CONFIG_SHEET_NAME = 'AppConfig'; // NUEVA: Nombre de la pestaña para configuración de la app
 
 let sheets; // Variable global para el cliente de Google Sheets API
 
-// Variable para el estado del modo de mantenimiento (EN UN ENTORNO REAL, ESTO DEBERÍA PERSISTIR EN GOOGLE SHEETS O DB)
+// Variable para el estado del modo de mantenimiento
+// Inicialmente false, pero se cargará desde Google Sheets al iniciar el servidor
 let maintenanceMode = false; 
 
 // Función para autenticar y obtener el cliente de Google Sheets
@@ -48,6 +50,10 @@ async function authenticateGoogleSheets() {
         await auth.authorize();
         sheets = google.sheets({ version: 'v4', auth });
         console.log("Autenticación con Google Sheets exitosa!");
+
+        // --- Cargar el estado inicial del modo de mantenimiento desde Google Sheets ---
+        await loadMaintenanceModeFromSheet();
+
     } catch (error) {
         console.error("Error al autenticar con Google Sheets:", error.message);
         // Opcional: Reintentar conexión después de un tiempo si la autenticación falla
@@ -198,7 +204,7 @@ async function updateSheetRow(sheetName, identifier, identifierValue, newRowData
     if (!sheets) throw new Error("Google Sheets API no inicializada.");
     try {
         const allRows = await getSheetData(sheetName); // Obtener todos los datos
-        const headers = allRows.length > 0 ? Object.keys(allRows[0]) : [];
+        const headers = allRows.length > 0 ? Object.keys(allRows[0]) : await getSheetHeaders(sheetName); // Obtener headers si no hay filas
 
         const rowIndexToUpdate = allRows.findIndex(row => row[identifier] === identifierValue);
         
@@ -245,6 +251,66 @@ async function getSheetHeaders(sheetName) {
         throw error;
     }
 }
+
+// --- Funciones para manejar la configuración de la aplicación (modo de mantenimiento) ---
+
+/**
+ * Lee un valor de configuración de la hoja 'AppConfig'.
+ * Asume que 'AppConfig' tiene columnas 'SettingName' y 'SettingValue'.
+ * @param {string} key El nombre de la configuración a leer (ej. 'maintenanceMode').
+ * @returns {Promise<string|undefined>} El valor de la configuración o undefined si no se encuentra.
+ */
+async function getAppConfigValue(key) {
+    try {
+        const configData = await getSheetData(APP_CONFIG_SHEET_NAME);
+        const configEntry = configData.find(row => row.SettingName === key);
+        return configEntry ? configEntry.SettingValue : undefined;
+    } catch (error) {
+        console.error(`Error al leer la configuración '${key}' de Google Sheets:`, error);
+        return undefined; // Retornar undefined en caso de error
+    }
+}
+
+/**
+ * Guarda un valor de configuración en la hoja 'AppConfig'.
+ * Asume que 'AppConfig' tiene columnas 'SettingName' y 'SettingValue'.
+ * Si la configuración existe, la actualiza; si no, la añade.
+ * @param {string} key El nombre de la configuración a guardar (ej. 'maintenanceMode').
+ * @param {string} value El valor a guardar.
+ */
+async function setAppConfigValue(key, value) {
+    try {
+        // Asumimos que los encabezados son 'SettingName' y 'SettingValue' para la hoja AppConfig
+        const newConfigData = { SettingName: key, SettingValue: value };
+        await updateSheetRow(APP_CONFIG_SHEET_NAME, 'SettingName', key, newConfigData);
+        console.log(`Configuración '${key}' guardada en Google Sheets: ${value}`);
+    } catch (error) {
+        console.error(`Error al guardar la configuración '${key}' en Google Sheets:`, error);
+    }
+}
+
+/**
+ * Carga el estado inicial de maintenanceMode desde Google Sheets.
+ * Si no se encuentra, lo inicializa a 'false' y lo guarda.
+ */
+async function loadMaintenanceModeFromSheet() {
+    try {
+        let loadedValue = await getAppConfigValue('maintenanceMode');
+        if (loadedValue === undefined) {
+            // Si la configuración no existe, inicializarla a 'false' y guardarla
+            await setAppConfigValue('maintenanceMode', 'false');
+            maintenanceMode = false;
+            console.log("Modo de mantenimiento inicializado a false en Google Sheets.");
+        } else {
+            maintenanceMode = (loadedValue === 'true'); // Convertir string a booleano
+            console.log(`Modo de mantenimiento cargado desde Google Sheets: ${maintenanceMode}`);
+        }
+    } catch (error) {
+        console.error("Error al cargar el modo de mantenimiento al iniciar el servidor:", error);
+        maintenanceMode = false; // Fallback a false en caso de error grave
+    }
+}
+
 
 // --- Endpoint para OBTENER TODAS las Licencias (para el generador) ---
 app.get('/licenses', async (req, res) => {
@@ -425,7 +491,7 @@ app.post('/collect-user-data', async (req, res) => {
             console.log(`Datos de usuario actualizados para ${userEmail}.`);
         } else {
             // Si el usuario no existe, inserta una nueva fila
-            await appendSheetRow(USERS_SHEETS_NAME, userData);
+            await appendSheetRow(USERS_SHEET_NAME, userData); // Usar USERS_SHEET_NAME
             console.log(`Nuevo usuario registrado: ${userEmail}.`);
         }
         
@@ -438,11 +504,12 @@ app.post('/collect-user-data', async (req, res) => {
 });
 
 // --- NUEVO ENDPOINT: Establecer Modo de Mantenimiento ---
-app.post('/set-maintenance-mode', (req, res) => {
+app.post('/set-maintenance-mode', async (req, res) => { // Marcado como async
     const { maintenanceMode: newState } = req.body;
     if (typeof newState === 'boolean') {
         maintenanceMode = newState; // Actualiza la variable en memoria
-        // En un entorno de producción, aquí deberías guardar 'newState' en tu Google Sheet o DB.
+        // Persistir el estado en Google Sheets
+        await setAppConfigValue('maintenanceMode', newState.toString()); 
         console.log(`Modo de mantenimiento cambiado a: ${maintenanceMode}`);
         res.json({ success: true, message: `Modo de mantenimiento establecido a ${newState}` });
     } else {
@@ -452,8 +519,7 @@ app.post('/set-maintenance-mode', (req, res) => {
 
 // --- NUEVO ENDPOINT: Obtener Estado de Modo de Mantenimiento ---
 app.get('/get-maintenance-status', (req, res) => {
-    res.json({ maintenanceMode: maintenanceMode }); // Retorna el estado actual en memoria
-    // En un entorno de producción, aquí deberías leer el estado desde tu Google Sheet o DB.
+    res.json({ maintenanceMode: maintenanceMode }); // Retorna el estado actual en memoria (que está sincronizado con la hoja)
 });
 
 
