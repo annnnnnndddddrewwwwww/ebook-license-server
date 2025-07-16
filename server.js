@@ -1,5 +1,4 @@
 // server.js
-
 require('dotenv').config(); // Carga las variables de entorno desde .env (solo para desarrollo local)
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
@@ -30,52 +29,38 @@ const USERS_SHEET_NAME = 'Users';       // Nombre de la pestaña para usuarios
 const APP_CONFIG_SHEET_NAME = 'AppConfig'; // NUEVA: Nombre de la pestaña para configuración de la app
 
 let sheets; // Variable global para el cliente de Google Sheets
-let maintenanceMode = false; // Estado inicial del modo de mantenimiento
 
-// --- Configuración de Nodemailer --- // <-- ADD THIS SECTION
+// Configuración del transporter de correo electrónico (ejemplo con Gmail)
 const transporter = nodemailer.createTransport({
     service: 'gmail', // Puedes usar 'smtp.mailtrap.io' para pruebas o tu proveedor de correo
     auth: {
-        user: process.env.EMAIL_USER,    // Tu correo electrónico (ej. 'tu_correo@gmail.com')
-        pass: process.env.EMAIL_PASS    // Tu contraseña de aplicación/token de seguridad
-    }
+        user: process.env.EMAIL_USER,    // Tu correo electrónico (ej. 'tu.email@gmail.com')
+        pass: process.env.EMAIL_PASS,    // Tu contraseña de aplicación (para Gmail, no tu contraseña normal)
+    },
 });
 
-// --- Funciones de Google Sheets (asegúrate de que estas funciones existan en tu archivo) ---
-// Initialize Google Sheets API
+// --- Inicialización de Google Sheets ---
 async function initGoogleSheets() {
     try {
-        const auth = new google.auth.JWT(
-            GOOGLE_SERVICE_ACCOUNT_EMAIL,
-            null,
-            GOOGLE_PRIVATE_KEY,
-            ['https://www.googleapis.com/auth/spreadsheets']
-        );
-        sheets = google.sheets({ version: 'v4', auth });
+        const auth = new google.auth.GoogleAuth({
+            credentials: {
+                client_email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
+                private_key: GOOGLE_PRIVATE_KEY,
+            },
+            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+        });
+        const authClient = await auth.getClient();
+        sheets = google.sheets({ version: 'v4', auth: authClient });
         console.log('Conexión con Google Sheets establecida.');
 
-        // Cargar el estado del modo de mantenimiento al iniciar el servidor
-        const maintenanceStatus = await getAppConfigValue('maintenanceMode');
-        maintenanceMode = maintenanceStatus === 'true'; // Convertir a booleano
-        console.log(`Modo de mantenimiento inicial: ${maintenanceMode}`);
+        // Cargar el modo de mantenimiento al iniciar
+        const maintenanceModeValue = await getAppConfigValue('maintenanceMode');
+        maintenanceMode = (maintenanceModeValue === 'true');
+        console.log(`Modo de mantenimiento inicial: ${maintenanceMode ? 'ACTIVO' : 'DESACTIVADO'}`);
 
     } catch (error) {
         console.error('Error al conectar con Google Sheets:', error.message);
-        process.exit(1); // Salir si no se puede conectar a Sheets
-    }
-}
-
-// Function to read data from a sheet
-async function readSheet(sheetName) {
-    try {
-        const response = await sheets.spreadsheets.values.get({
-            spreadsheetId: GOOGLE_SHEET_ID,
-            range: sheetName,
-        });
-        return response.data.values || [];
-    } catch (error) {
-        console.error(`Error al leer la hoja ${sheetName}:`, error.message);
-        throw error;
+        process.exit(1); // Sale de la aplicación si no se puede conectar a Google Sheets
     }
 }
 
@@ -90,318 +75,412 @@ async function appendSheetRow(sheetName, rowData) {
                 values: [rowData],
             },
         });
+        console.log(`Fila añadida a ${sheetName}.`);
         return response.data;
     } catch (error) {
-        console.error(`Error al añadir fila en la hoja ${sheetName}:`, error.message);
+        console.error(`Error al añadir fila a ${sheetName}:`, error.message);
         throw error;
     }
 }
 
-// Function to update a row in a sheet by row number (index + 1)
-async function updateSheetRow(sheetName, rowIndex, rowData) {
+// Function to get all rows from a sheet
+async function getSheetRows(sheetName) {
     try {
-        const range = `${sheetName}!A${rowIndex + 1}`; // A is the first column, rowIndex is 0-based
-        const response = await sheets.spreadsheets.values.update({
+        const response = await sheets.spreadsheets.values.get({
             spreadsheetId: GOOGLE_SHEET_ID,
-            range: range,
-            valueInputOption: 'USER_ENTERED',
-            resource: {
-                values: [rowData],
-            },
+            range: sheetName,
         });
-        return response.data;
+        return response.data.values || [];
     } catch (error) {
-        console.error(`Error al actualizar fila ${rowIndex + 1} en la hoja ${sheetName}:`, error.message);
+        console.error(`Error al obtener filas de ${sheetName}:`, error.message);
         throw error;
     }
 }
 
-// Function to update a specific cell in a sheet
-async function updateSheetCell(sheetName, cell, value) {
+// Function to update a specific cell (for app config)
+async function updateSheetCell(sheetName, range, value) {
     try {
-        const range = `${sheetName}!${cell}`;
-        const response = await sheets.spreadsheets.values.update({
+        await sheets.spreadsheets.values.update({
             spreadsheetId: GOOGLE_SHEET_ID,
-            range: range,
-            valueInputOption: 'USER_ENTERED',
+            range: `${sheetName}!${range}`,
+            valueInputOption: 'RAW',
             resource: {
                 values: [[value]],
             },
         });
-        return response.data;
+        console.log(`Celda ${sheetName}!${range} actualizada a: ${value}`);
     } catch (error) {
-        console.error(`Error al actualizar celda ${cell} en la hoja ${sheetName}:`, error.message);
+        console.error(`Error al actualizar celda ${sheetName}!${range}:`, error.message);
         throw error;
     }
 }
 
-// Function to get a value from the AppConfig sheet
+// Function to get a specific value from AppConfig sheet
 async function getAppConfigValue(key) {
     try {
-        const configData = await readSheet(APP_CONFIG_SHEET_NAME);
-        const headerRow = configData[0];
-        if (!headerRow) return null; // Sheet is empty
+        const rows = await getSheetRows(APP_CONFIG_SHEET_NAME);
+        const header = rows[0];
+        const dataRows = rows.slice(1);
 
-        const keyColumnIndex = headerRow.indexOf('Key');
-        const valueColumnIndex = headerRow.indexOf('Value');
+        const keyColumnIndex = header.indexOf('Key');
+        const valueColumnIndex = header.indexOf('Value');
 
         if (keyColumnIndex === -1 || valueColumnIndex === -1) {
-            console.warn(`Columnas 'Key' o 'Value' no encontradas en ${APP_CONFIG_SHEET_NAME}.`);
+            console.warn(`Encabezados 'Key' o 'Value' no encontrados en la hoja '${APP_CONFIG_SHEET_NAME}'.`);
             return null;
         }
 
-        const row = configData.find(r => r[keyColumnIndex] === key);
-        return row ? row[valueColumnIndex] : null;
+        const configRow = dataRows.find(row => row[keyColumnIndex] === key);
+        return configRow ? configRow[valueColumnIndex] : null;
+
     } catch (error) {
-        console.error(`Error al obtener el valor de configuración para ${key}:`, error.message);
+        console.error(`Error al obtener valor de configuración para '${key}':`, error.message);
         return null;
     }
 }
 
-// Function to set a value in the AppConfig sheet
+// Function to set a specific value in AppConfig sheet
 async function setAppConfigValue(key, value) {
     try {
-        const configData = await readSheet(APP_CONFIG_SHEET_NAME);
-        const headerRow = configData[0];
-        let rowIndex = -1;
+        const rows = await getSheetRows(APP_CONFIG_SHEET_NAME);
+        const header = rows[0];
+        const dataRows = rows.slice(1);
 
-        if (headerRow) {
-            const keyColumnIndex = headerRow.indexOf('Key');
-            if (keyColumnIndex !== -1) {
-                // Find existing row for the key
-                rowIndex = configData.findIndex((row, i) => i > 0 && row[keyColumnIndex] === key);
-            }
+        const keyColumnIndex = header.indexOf('Key');
+        const valueColumnIndex = header.indexOf('Value');
+
+        if (keyColumnIndex === -1 || valueColumnIndex === -1) {
+            throw new Error(`Encabezados 'Key' o 'Value' no encontrados en la hoja '${APP_CONFIG_SHEET_NAME}'.`);
         }
 
-        if (rowIndex !== -1) {
-            // Update existing row
-            const actualRowIndex = rowIndex; // rowIndex here is 0-based index of the data, so 1-based in sheet
-            const valueCell = `B${actualRowIndex + 1}`; // Assuming 'Value' is in column B
-            await updateSheetCell(APP_CONFIG_SHEET_NAME, valueCell, value);
-        } else {
-            // Append new row if key doesn't exist
+        let rowIndex = dataRows.findIndex(row => row[keyColumnIndex] === key);
+        if (rowIndex === -1) {
+            // If key does not exist, append a new row
             await appendSheetRow(APP_CONFIG_SHEET_NAME, [key, value]);
+        } else {
+            // If key exists, update the existing row
+            // +2 because Sheets API is 1-indexed and we skipped header row
+            const actualRowInSheet = rowIndex + 2;
+            const range = `${String.fromCharCode(65 + valueColumnIndex)}${actualRowInSheet}`; // Convert index to column letter
+            await updateSheetCell(APP_CONFIG_SHEET_NAME, range, value);
         }
-        console.log(`Configuración '${key}' actualizada a: ${value}`);
     } catch (error) {
-        console.error(`Error al establecer el valor de configuración para ${key}:`, error.message);
-        throw error;
+        console.error(`Error al establecer valor de configuración para '${key}':`, error.message);
+        throw error; // Re-throw to propagate the error
     }
 }
 
+let maintenanceMode = false; // Estado del modo de mantenimiento, por defecto desactivado
 
-// --- API Endpoints ---
+// --- Rutas de la API ---
 
-// Endpoint para generar nuevas licencias
+// Ruta para generar una nueva licencia
 app.post('/generate-license', async (req, res) => {
-    // ... (Your existing /generate-license code) ...
     if (maintenanceMode) {
-        return res.status(503).json({ success: false, message: "El servidor está en modo de mantenimiento." });
+        return res.status(503).json({ success: false, message: 'El servicio está en modo de mantenimiento. Por favor, inténtalo de nuevo más tarde.' });
     }
-    const { count = 1, type = 'standard' } = req.body; // Puedes añadir tipo de licencia si quieres
-    const licenses = [];
-    const now = new Date().toISOString();
 
-    for (let i = 0; i < count; i++) {
-        const newLicense = uuidv4();
-        licenses.push([newLicense, 'unused', now, '', '', '', '']); // licenseKey, status, generatedDate, usedBy, usedDate, userEmail, userIP
-    }
+    const { maxUniqueIps = 1 } = req.body; // Default to 1 if not provided
+
+    const newLicense = {
+        licenseKey: uuidv4(),
+        // status: 'unused', // ¡Campo 'status' eliminado aquí!
+        generatedDate: new Date().toISOString(),
+        maxUniqueIps: maxUniqueIps,
+        // usedBy: '', // Estos campos serán rellenados cuando la licencia se use
+        // usedDate: '',
+        // invalidatedBy: '',
+        // invalidatedDate: ''
+    };
+
+    // Asegúrate de que el orden de los valores coincida con el orden de las columnas en tu hoja de Google Sheets.
+    // Si tu hoja 'Licenses' ahora tiene una columna menos o diferente orden, ajústalo aquí.
+    const rowData = [
+        newLicense.licenseKey,
+        // Ya no enviamos newLicense.status
+        newLicense.generatedDate,
+        newLicense.maxUniqueIps,
+        '', // Espacio para usedBy
+        '', // Espacio para usedDate
+        '', // Espacio para invalidatedBy
+        ''  // Espacio para invalidatedDate
+    ];
 
     try {
-        await appendSheetRow(LICENSES_SHEET_NAME, licenses);
-        res.json({ success: true, message: `${count} licencias generadas y guardadas.`, licenses: licenses.map(l => l[0]) });
+        await appendSheetRow(LICENSES_SHEET_NAME, rowData);
+        res.status(201).json({ success: true, message: 'Licencia generada y guardada.', license: newLicense.licenseKey });
     } catch (error) {
         console.error('Error al generar y guardar licencias:', error.message);
-        res.status(500).json({ success: false, message: 'Error interno del servidor al generar licencias.' });
+        res.status(500).json({ success: false, message: 'Error interno del servidor al generar licencia.' });
     }
 });
 
-// Endpoint para validar y registrar licencias
+// Ruta para validar y registrar una licencia
 app.post('/validate-and-register-license', async (req, res) => {
     if (maintenanceMode) {
-        return res.status(503).json({ success: false, message: "El servidor está en modo de mantenimiento." });
+        return res.status(503).json({ success: false, message: 'El servicio está en modo de mantenimiento. Por favor, inténtalo de nuevo más tarde.' });
     }
-    const { userName, userEmail, licenseKey } = req.body;
-    const userIP = req.ip || req.connection.remoteAddress; // Obtener IP del usuario
 
-    if (!userName || !userEmail || !licenseKey) {
-        return res.status(400).json({ success: false, message: 'Faltan nombre, correo o clave de licencia.' });
+    const { licenseKey, userName, userEmail } = req.body;
+
+    if (!licenseKey || !userName || !userEmail) {
+        return res.status(400).json({ success: false, message: 'Faltan parámetros: licenseKey, userName y userEmail son obligatorios.' });
     }
 
     try {
-        const licenses = await readSheet(LICENSES_SHEET_NAME);
+        const licenses = await getSheetRows(LICENSES_SHEET_NAME);
+        const users = await getSheetRows(USERS_SHEET_NAME);
+
         const licenseHeader = licenses[0];
-        const licenseData = licenses.slice(1);
+        const licenseDataRows = licenses.slice(1);
+        const userHeader = users[0];
+        const userDataRows = users.slice(1);
 
-        const keyIndex = licenseHeader.indexOf('licenseKey');
-        const statusIndex = licenseHeader.indexOf('status');
-        const usedByIndex = licenseHeader.indexOf('usedBy');
-        const usedDateIndex = licenseHeader.indexOf('usedDate');
-        const userEmailIndex = licenseHeader.indexOf('userEmail');
-        const userIPIndex = licenseHeader.indexOf('userIP');
+        const licenseKeyColIndex = licenseHeader.indexOf('licenseKey');
+        const statusColIndex = licenseHeader.indexOf('status');
+        const maxUniqueIpsColIndex = licenseHeader.indexOf('maxUniqueIps');
+        const usedByColIndex = licenseHeader.indexOf('usedBy');
+        const usedDateColIndex = licenseHeader.indexOf('usedDate');
 
-        // Find the license and its row index
-        let licenseFound = false;
-        let licenseRowIndex = -1;
-        let isValidLicense = false; // <-- Initializing isValidLicense here
-        let currentLicenseStatus = '';
+        const userNameColIndex = userHeader.indexOf('userName');
+        const userEmailColIndex = userHeader.indexOf('userEmail');
+        const lastAccessColIndex = userHeader.indexOf('lastAccess');
 
-        for (let i = 0; i < licenseData.length; i++) {
-            if (licenseData[i][keyIndex] === licenseKey) {
-                licenseFound = true;
-                licenseRowIndex = i + 1; // +1 because sheet rows are 1-based and we sliced the header
-                currentLicenseStatus = licenseData[i][statusIndex];
+        if (licenseKeyColIndex === -1 || statusColIndex === -1 || maxUniqueIpsColIndex === -1 ||
+            usedByColIndex === -1 || usedDateColIndex === -1 || userNameColIndex === -1 ||
+            userEmailColIndex === -1 || lastAccessColIndex === -1) {
+            return res.status(500).json({ success: false, message: 'Error de configuración: Faltan encabezados de columna en Google Sheets.' });
+        }
 
-                if (currentLicenseStatus === 'unused' || licenseData[i][userEmailIndex] === userEmail) {
-                    isValidLicense = true; // License is unused OR it's already used by THIS user
-                }
+        let foundLicenseRowIndex = -1;
+        let licenseData = null;
+
+        // Find the license and its original row index in the sheet (1-indexed for Sheets API, plus header)
+        for (let i = 0; i < licenseDataRows.length; i++) {
+            if (licenseDataRows[i][licenseKeyColIndex] === licenseKey) {
+                foundLicenseRowIndex = i + 2; // +2 for 1-based index and header row
+                licenseData = licenseDataRows[i];
                 break;
             }
         }
 
-        if (isValidLicense) { // <-- The 'if (isValidLicense)' block starts here
-            // Update license status if it was unused
-            if (currentLicenseStatus === 'unused') {
-                const updatedLicenseRow = [...licenses[licenseRowIndex]]; // Get current row data
-                updatedLicenseRow[statusIndex] = 'used';
-                updatedLicenseRow[usedByIndex] = userName;
-                updatedLicenseRow[usedDateIndex] = new Date().toISOString();
-                updatedLicenseRow[userEmailIndex] = userEmail;
-                updatedLicenseRow[userIPIndex] = userIP;
-                await updateSheetRow(LICENSES_SHEET_NAME, licenseRowIndex, updatedLicenseRow);
-            }
+        if (!licenseData) {
+            return res.status(404).json({ success: false, message: 'Licencia no encontrada.' });
+        }
 
-            // Register/Update user data in 'Users' sheet
-            const users = await readSheet(USERS_SHEET_NAME);
-            const usersHeader = users[0];
-            const usersData = users.slice(1);
+        // --- Validación de licencia ---
+        const currentStatus = licenseData[statusColIndex];
+        const currentUsedBy = licenseData[usedByColIndex];
+        const currentMaxIps = parseInt(licenseData[maxUniqueIpsColIndex] || '1', 10);
 
-            const userIdIndex = usersHeader.indexOf('userId');
-            const userNameIndex = usersHeader.indexOf('userName');
-            const userEmailColIndex = usersHeader.indexOf('userEmail');
-            const userIPColIndex = usersHeader.indexOf('userIP');
-            const lastAccessDateIndex = usersHeader.indexOf('lastAccessDate');
-            const licenseKeyColIndex = usersHeader.indexOf('licenseKey');
+        if (currentStatus === 'used' && currentUsedBy !== userEmail) {
+            return res.status(403).json({ success: false, message: 'Esta licencia ya está en uso por otro usuario.' });
+        }
+        if (currentStatus === 'invalidated') {
+            return res.status(403).json({ success: false, message: 'Esta licencia ha sido invalidada.' });
+        }
 
-            let userFound = false;
-            let userRowIndex = -1;
-
-            for (let i = 0; i < usersData.length; i++) {
-                if (usersData[i][userEmailColIndex] === userEmail) {
-                    userFound = true;
-                    userRowIndex = i + 1; // +1 for actual sheet row
-                    break;
-                }
-            }
-
-            if (userFound) {
-                // Update existing user
-                const updatedUserRow = [...users[userRowIndex]];
-                updatedUserRow[userNameIndex] = userName; // Update name in case it changed
-                updatedUserRow[userIPColIndex] = userIP;
-                updatedUserRow[lastAccessDateIndex] = new Date().toISOString();
-                updatedUserRow[licenseKeyColIndex] = licenseKey; // Update license in case it changed
-                await updateSheetRow(USERS_SHEET_NAME, userRowIndex, updatedUserRow);
-            } else {
-                // Register new user
-                const newUserId = uuidv4();
-                await appendSheetRow(USERS_SHEET_NAME, [
-                    newUserId, userName, userEmail, userIP, new Date().toISOString(), licenseKey
-                ]);
-            }
-
-            // --- Enviar correo de bienvenida ---
-            const mailOptions = {
-                from: process.env.EMAIL_USER, // Remitente
-                to: userEmail, // Correo del usuario que acaba de acceder
-                subject: '¡Bienvenido a tu Ebook Exclusivo de Eva Vidal!',
-                html: `
-                    <div style="font-family: 'Inter', sans-serif; max-width: 600px; margin: auto; border: 1px solid #e0e0e0; border-radius: 10px; overflow: hidden;">
-                        <div style="background-color: #4A729E; padding: 30px 20px; text-align: center; color: white;">
-                            <h2 style="margin: 0; font-family: 'Poppins', sans-serif; font-size: 28px;">¡Bienvenido/a, ${userName}!</h2>
-                            <p style="font-size: 16px; margin-top: 10px;">Tu acceso al Ebook de Nutrición y Bienestar ha sido confirmado.</p>
-                        </div>
-                        <div style="padding: 30px; color: #444444; line-height: 1.6;">
-                            <p>Estamos encantados de que formes parte de nuestra comunidad. Con esta licencia, has desbloqueado contenido exclusivo diseñado para ayudarte en tu camino hacia una vida más saludable.</p>
-                            <p>Puedes acceder a tu ebook en cualquier momento desde nuestro portal web. Asegúrate de guardar tu clave de licencia.</p>
-                            <p>Si tienes alguna pregunta o necesitas asistencia, no dudes en contactarnos a través de WhatsApp. Estamos aquí para ayudarte.</p>
-                            <p style="text-align: center; margin-top: 30px;">
-                                <a href="https://wa.me/XXXXXXXXX" style="background-color: #25D366; color: white; padding: 12px 25px; border-radius: 5px; text-decoration: none; font-weight: bold;">Contactar por WhatsApp</a>
-                            </p>
-                            <p style="font-size: 14px; color: #777; text-align: center; margin-top: 40px;">
-                                ¡Gracias por confiar en Eva Vidal!
-                            </p>
-                        </div>
-                        <div style="background-color: #f8f8f8; padding: 20px; text-align: center; font-size: 12px; color: #999;">
-                            <p>&copy; ${new Date().getFullYear()} Eva Vidal. Todos los derechos reservados.</p>
-                        </div>
-                    </div>
-                `
-            };
-
-            try {
-                await transporter.sendMail(mailOptions);
-                console.log(`Correo de bienvenida enviado a ${userEmail}`);
-            } catch (emailError) {
-                console.error(`Error al enviar correo de bienvenida a ${userEmail}:`, emailError);
-                // Not critical for access, just log the error
-            }
-
-            res.json({
-                success: true,
-                message: "Acceso concedido al ebook. ¡Bienvenido!",
-                userName: userName,
-                userEmail: userEmail,
-                licenseKey: licenseKey,
-                redirectToEbook: true
-            });
-        } else { // <-- This 'else' block handles invalid licenses
-            if (!licenseFound) {
-                return res.status(400).json({ success: false, message: 'Clave de licencia no encontrada.' });
-            } else if (currentLicenseStatus === 'used') {
-                return res.status(400).json({ success: false, message: 'Clave de licencia ya utilizada por otro usuario.' });
-            } else {
-                return res.status(400).json({ success: false, message: 'Clave de licencia inválida.' });
+        // --- Registro/Actualización de usuario ---
+        let foundUserRowIndex = -1;
+        let userData = null;
+        for (let i = 0; i < userDataRows.length; i++) {
+            if (userDataRows[i][userEmailColIndex] === userEmail) {
+                foundUserRowIndex = i + 2; // +2 for 1-based index and header row
+                userData = userDataRows[i];
+                break;
             }
         }
+
+        const now = new Date().toISOString();
+
+        if (userData) {
+            // Update existing user
+            await updateSheetCell(USERS_SHEET_NAME, `C${foundUserRowIndex}`, now); // Update lastAccess
+            // Ensure userName is consistent if email is the same
+            if (userData[userNameColIndex] !== userName) {
+                await updateSheetCell(USERS_SHEET_NAME, `A${foundUserRowIndex}`, userName);
+            }
+        } else {
+            // Add new user
+            await appendSheetRow(USERS_SHEET_NAME, [userName, userEmail, now]);
+        }
+
+        // --- Actualización de la licencia ---
+        if (currentStatus === 'unused') {
+            // Update status to 'used', set usedBy and usedDate
+            await sheets.spreadsheets.values.update({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                range: `${LICENSES_SHEET_NAME}!B${foundLicenseRowIndex}`, // Column B is status
+                valueInputOption: 'RAW',
+                resource: {
+                    values: [['used']],
+                },
+            });
+            await sheets.spreadsheets.values.update({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                range: `${LICENSES_SHEET_NAME}!D${foundLicenseRowIndex}`, // Column D is usedBy
+                valueInputOption: 'RAW',
+                resource: {
+                    values: [[userEmail]],
+                },
+            });
+            await sheets.spreadsheets.values.update({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                range: `${LICENSES_SHEET_NAME}!E${foundLicenseRowIndex}`, // Column E is usedDate
+                valueInputOption: 'RAW',
+                resource: {
+                    values: [[now]],
+                },
+            });
+            res.json({ success: true, message: 'Licencia validada y registrada correctamente.' });
+        } else if (currentStatus === 'used') {
+            // License already in use by this user, just re-validate
+            res.json({ success: true, message: 'Licencia ya validada para este usuario.' });
+        } else {
+            res.status(400).json({ success: false, message: 'Estado de licencia desconocido.' });
+        }
+
     } catch (error) {
-        console.error('Error en la validación/registro de licencia:', error.message);
-        res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+        console.error('Error al validar la licencia:', error.message);
+        res.status(500).json({ success: false, message: 'Error interno del servidor al validar licencia.' });
     }
 });
 
-// Endpoint para ver todas las licencias (admin)
-app.get('/licenses', async (req, res) => {
-    // ... (Your existing /licenses code) ...
+
+// Ruta para invalidar una licencia (ej. por un administrador)
+app.post('/invalidate-license', async (req, res) => {
     if (maintenanceMode) {
-        return res.status(503).json({ success: false, message: "El servidor está en modo de mantenimiento." });
+        return res.status(503).json({ success: false, message: 'El servicio está en modo de mantenimiento. Por favor, inténtalo de nuevo más tarde.' });
+    }
+    const { licenseKey, invalidatedBy } = req.body;
+
+    if (!licenseKey || !invalidatedBy) {
+        return res.status(400).json({ success: false, message: 'Faltan licenseKey o invalidatedBy.' });
+    }
+
+    try {
+        const licenses = await getSheetRows(LICENSES_SHEET_NAME);
+        const header = licenses[0];
+        const dataRows = licenses.slice(1);
+
+        const licenseKeyColIndex = header.indexOf('licenseKey');
+        const statusColIndex = header.indexOf('status');
+        const invalidatedByColIndex = header.indexOf('invalidatedBy');
+        const invalidatedDateColIndex = header.indexOf('invalidatedDate');
+
+        if (licenseKeyColIndex === -1 || statusColIndex === -1 || invalidatedByColIndex === -1 || invalidatedDateColIndex === -1) {
+            return res.status(500).json({ success: false, message: 'Error de configuración: Faltan encabezados de columna en Google Sheets para invalidación.' });
+        }
+
+        let foundRowIndex = -1;
+        let licenseData = null;
+
+        for (let i = 0; i < dataRows.length; i++) {
+            if (dataRows[i][licenseKeyColIndex] === licenseKey) {
+                foundRowIndex = i + 2; // +2 for 1-based index and header row
+                licenseData = dataRows[i];
+                break;
+            }
+        }
+
+        if (!licenseData) {
+            return res.status(404).json({ success: false, message: 'Licencia no encontrada.' });
+        }
+
+        if (licenseData[statusColIndex] === 'invalidated') {
+            return res.status(400).json({ success: false, message: 'Esta licencia ya ha sido invalidada.' });
+        }
+
+        // Actualizar el estado a 'invalidated', y rellenar invalidatedBy y invalidatedDate
+        await sheets.spreadsheets.values.update({
+            spreadsheetId: GOOGLE_SHEET_ID,
+            range: `${LICENSES_SHEET_NAME}!B${foundRowIndex}`, // Columna B es status
+            valueInputOption: 'RAW',
+            resource: {
+                values: [['invalidated']],
+            },
+        });
+        await sheets.spreadsheets.values.update({
+            spreadsheetId: GOOGLE_SHEET_ID,
+            range: `${LICENSES_SHEET_NAME}!F${foundRowIndex}`, // Columna F es invalidatedBy
+            valueInputOption: 'RAW',
+            resource: {
+                values: [[invalidatedBy]],
+            },
+        });
+        await sheets.spreadsheets.values.update({
+            spreadsheetId: GOOGLE_SHEET_ID,
+            range: `${LICENSES_SHEET_NAME}!G${foundRowIndex}`, // Columna G es invalidatedDate
+            valueInputOption: 'RAW',
+            resource: {
+                values: [[new Date().toISOString()]],
+            },
+        });
+
+        res.json({ success: true, message: 'Licencia invalidada correctamente.' });
+
+    } catch (error) {
+        console.error('Error al invalidar licencia:', error.message);
+        res.status(500).json({ success: false, message: 'Error interno del servidor al invalidar licencia.' });
+    }
+});
+
+
+// Ruta para obtener todas las licencias (requiere autenticación o ser solo para admin)
+app.get('/licenses', async (req, res) => {
+    if (maintenanceMode) {
+        return res.status(503).json({ success: false, message: 'El servicio está en modo de mantenimiento. Por favor, inténtalo de nuevo más tarde.' });
     }
     try {
-        const licenses = await readSheet(LICENSES_SHEET_NAME);
-        res.json({ success: true, licenses });
+        const rows = await getSheetRows(LICENSES_SHEET_NAME);
+        if (rows.length === 0) {
+            return res.json({ licenses: [] });
+        }
+        const headers = rows[0];
+        const data = rows.slice(1).map(row => {
+            let license = {};
+            headers.forEach((header, index) => {
+                license[header] = row[index] || '';
+            });
+            return license;
+        });
+        res.json({ licenses: data });
     } catch (error) {
         console.error('Error al obtener licencias:', error.message);
-        res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+        res.status(500).json({ success: false, message: 'Error interno del servidor al obtener licencias.' });
     }
 });
 
-// Endpoint para ver todos los usuarios (admin)
+
+// Ruta para obtener todos los usuarios (requiere autenticación o ser solo para admin)
 app.get('/users', async (req, res) => {
-    // ... (Your existing /users code) ...
     if (maintenanceMode) {
-        return res.status(503).json({ success: false, message: "El servidor está en modo de mantenimiento." });
+        return res.status(503).json({ success: false, message: 'El servicio está en modo de mantenimiento. Por favor, inténtalo de nuevo más tarde.' });
     }
     try {
-        const users = await readSheet(USERS_SHEET_NAME);
-        res.json({ success: true, users });
+        const rows = await getSheetRows(USERS_SHEET_NAME);
+        if (rows.length === 0) {
+            return res.json({ users: [] });
+        }
+        const headers = rows[0];
+        const data = rows.slice(1).map(row => {
+            let user = {};
+            headers.forEach((header, index) => {
+                user[header] = row[index] || '';
+            });
+            return user;
+        });
+        res.json({ users: data });
     } catch (error) {
         console.error('Error al obtener usuarios:', error.message);
-        res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+        res.status(500).json({ success: false, message: 'Error interno del servidor al obtener usuarios.' });
     }
 });
 
+let maintenanceMode = false; // Estado del modo de mantenimiento, por defecto desactivado
+
 // Endpoint para establecer el modo de mantenimiento
-app.post('/set-maintenance-mode', async (req, res) => {
+app.post('/set-maintenance-mode', async (req, res) => { // Marcado como async
     const { maintenanceMode: newState } = req.body;
     if (typeof newState === 'boolean') {
         maintenanceMode = newState; // Actualiza la variable en memoria
@@ -428,6 +507,9 @@ app.get('/', (req, res) => {
 // Iniciar el servidor
 initGoogleSheets().then(() => {
     app.listen(port, () => {
-        console.log(`Servidor escuchando en http://localhost:${port}`);
+        console.log(`Servidor de licencias escuchando en http://localhost:${port}`);
     });
+}).catch(error => {
+    console.error('Fallo al iniciar el servidor:', error);
+    process.exit(1);
 });
