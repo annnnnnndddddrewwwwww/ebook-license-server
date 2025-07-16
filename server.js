@@ -477,7 +477,6 @@ app.get('/users', async (req, res) => {
     }
 });
 
-let maintenanceMode = false; // Estado del modo de mantenimiento, por defecto desactivado
 
 // Endpoint para establecer el modo de mantenimiento
 app.post('/set-maintenance-mode', async (req, res) => { // Marcado como async
