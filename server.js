@@ -9,6 +9,21 @@ const nodemailer = require('nodemailer');
 const app = express();
 const port = process.env.PORT || 3000;
 
+// --- Global Uncaught Exception Handling ---
+process.on('uncaughtException', (err) => {
+    console.error('ERROR FATAL: Se ha detectado una excepción no capturada!');
+    console.error(err);
+    process.exit(1); // Exit with a failure code
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('ERROR FATAL: Se ha detectado una promesa rechazada no manejada!');
+    console.error('Razón:', reason);
+    console.error('Promesa:', promise);
+    process.exit(1); // Exit with a failure code
+});
+// --- Fin del manejo de errores globales ---
+
 // --- Configuración de CORS ---
 app.use(cors({
     origin: '*', // Permite cualquier origen. PARA PRODUCCIÓN, REEMPLAZA CON TU DOMINIO REAL.
@@ -558,6 +573,6 @@ app.get('/', (req, res) => {
 });
 
 // Iniciar el servidor
-app.listen(port, () => {
-    console.log(`Servidor de licencias escuchando en http://localhost:${port}`);
+app.listen(port, '0.0.0.0', () => { // <--- Added '0.0.0.0'
+    console.log(`Servidor de licencias escuchando en http://0.0.0.0:${port}`); // Updated log for clarity
 });
