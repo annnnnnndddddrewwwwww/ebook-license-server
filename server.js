@@ -582,4 +582,25 @@ app.get('/', (req, res) => {
 // Iniciar el servidor
 app.listen(port, '0.0.0.0', () => { // <--- Added '0.0.0.0'
     console.log(`Servidor de licencias escuchando en http://0.0.0.0:${port}`); // Updated log for clarity
+
+// --- Función para iniciar el servidor de forma segura ---
+async function startServer() {
+    try {
+        console.log('Iniciando autenticación y configuración de Google Sheets...');
+        // Espera a que la autenticación y la carga/configuración inicial de Google Sheets se completen
+        await authenticateGoogleSheets();
+        console.log('Google Sheets: Configuración inicial completa. Iniciando servidor Express...');
+
+        // Ahora que Google Sheets está inicializado, inicia el servidor
+        app.listen(port, '0.0.0.0', () => {
+            console.log(`Servidor de licencias escuchando en http://0.0.0.0:${port}`);
+        });
+    } catch (error) {
+        console.error('ERROR CRÍTICO: El servidor no pudo iniciarse debido a un fallo en la configuración de Google Sheets:', error);
+        process.exit(1); // Sale del proceso si la configuración crítica falla
+    }
+}
+
+// Llama a la función para iniciar el servidor
+startServer();
 });
