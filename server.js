@@ -559,5 +559,5 @@ app.get('/', (req, res) => {
 
 // Iniciar el servidor
 app.listen(port, () => {
-    // ... (Tu código existente para iniciar el servidor)
+    console.log(`Servidor de licencias escuchando en http://localhost:${port}`);
 });
