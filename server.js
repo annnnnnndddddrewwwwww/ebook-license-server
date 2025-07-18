@@ -106,32 +106,39 @@ let sheets; // Variable global para el cliente de Google Sheets API
 // Inicialmente false, pero se cargará desde Google Sheets al iniciar el servidor
 let maintenanceMode = false; 
 
-// Función para autenticar y obtener el cliente de Google Sheets
+// Función para autenticar con Google Sheets y cargar/establecer modo de mantenimiento
 async function authenticateGoogleSheets() {
     try {
-        if (!GOOGLE_SHEET_ID || !GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_PRIVATE_KEY) {
-            console.error("Faltan variables de entorno para Google Sheets.");
-            return;
-        }
+        const auth = new google.auth.GoogleAuth({
+            credentials: {
+                client_email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
+                private_key: GOOGLE_PRIVATE_KEY,
+            },
+            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+        });
 
-        const auth = new google.auth.JWT(
-            GOOGLE_SERVICE_ACCOUNT_EMAIL,
-            null,
-            GOOGLE_PRIVATE_KEY,
-            ['https://www.googleapis.com/auth/spreadsheets']
-        );
+        const authClient = await auth.getClient();
+        googleSheets = google.sheets({ version: 'v4', auth: authClient });
+        console.log('Autenticación con Google Sheets exitosa!');
 
-        await auth.authorize();
-        sheets = google.sheets({ version: 'v4', auth });
-        console.log("Autenticación con Google Sheets exitosa!");
-
-        // --- Cargar el estado inicial del modo de mantenimiento desde Google Sheets ---
+        // Cargar o establecer el modo de mantenimiento
         await loadMaintenanceModeFromSheet();
 
     } catch (error) {
-        console.error("Error al autenticar con Google Sheets:", error.message);
-        // Opcional: Reintentar conexión después de un tiempo si la autenticación falla
-        // setTimeout(authenticateGoogleSheets, 5000); 
+        console.error('ERROR CRÍTICO: Fallo en la autenticación o configuración inicial de Google Sheets:', error.message);
+        console.error(error.stack); // Log the full stack trace
+        process.exit(1); // Exit if critical Google Sheets setup fails
+    }
+}
+
+// ... (Your loadMaintenanceModeFromSheet function)
+async function loadMaintenanceModeFromSheet() {
+    try {
+        // ... (existing code for reading and setting maintenance mode)
+    } catch (error) {
+        console.error('ERROR AL CARGAR/ESTABLECER MODO DE MANTENIMIENTO:', error.message);
+        console.error(error.stack); // Log the full stack trace
+        process.exit(1); // Exit if this critical operation fails
     }
 }
 
