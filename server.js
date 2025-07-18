@@ -4,6 +4,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const cors = require('cors');
 const { google } = require('googleapis'); // Importa googleapis
+const nodemailer = require('nodemailer');
 
 const app = express();
 const port = process.env.PORT || 3000;
