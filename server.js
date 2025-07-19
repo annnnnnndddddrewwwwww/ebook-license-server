@@ -427,6 +427,44 @@ app.get('/get-maintenance-status', (req, res) => {
     res.json({ maintenanceMode: maintenanceMode });
 });
 
+// --- NUEVO ENDPOINT: Generar Licencia ---
+app.post('/generate-license', async (req, res) => {
+    // Autenticación de administrador: Requiere la ADMIN_API_KEY
+    if (!process.env.ADMIN_API_KEY || req.headers['x-api-key'] !== process.env.ADMIN_API_KEY) {
+        console.warn('Intento de generación de licencia no autorizado.');
+        return res.status(403).json({ success: false, message: "Acceso no autorizado para generar licencias." });
+    }
+
+    const { maxUniqueIps } = req.body;
+    let numMaxIps = parseInt(maxUniqueIps || '1', 10); // Por defecto 1 si no se especifica o es inválido
+
+    if (isNaN(numMaxIps) || numMaxIps <= 0) {
+        return res.status(400).json({ success: false, message: "maxUniqueIps debe ser un número entero positivo." });
+    }
+
+    try {
+        const newLicenseKey = uuidv4(); // Genera un UUID único
+        const timestamp = new Date().toISOString();
+
+        // Estructura de la fila para Google Sheets: LicenseKey, Activated, MaxUniqueIPs, UniqueIPs (vacío), GeneratedAt
+        const licenseData = [
+            newLicenseKey,
+            'FALSE', // Por defecto no activada
+            numMaxIps.toString(), // Convertir a string para la hoja de cálculo
+            '',      // UniqueIPs vacío inicialmente
+            timestamp
+        ];
+
+        await appendSheetRow(LICENSES_SHEET_NAME, licenseData);
+        console.log(`Licencia generada y guardada: ${newLicenseKey} con ${numMaxIps} IPs máximas.`);
+
+        return res.status(200).json({ success: true, message: "Licencia generada correctamente.", licenseKey: newLicenseKey });
+    } catch (error) {
+        console.error("Error al generar y guardar la licencia:", error);
+        return res.status(500).json({ success: false, message: "Error interno del servidor al generar la licencia." });
+    }
+});
+
 // Ruta de bienvenida (opcional, para verificar que el servidor está corriendo)
 app.get('/', (req, res) => {
     res.send('Servidor de licencias funcionando correctamente.');
