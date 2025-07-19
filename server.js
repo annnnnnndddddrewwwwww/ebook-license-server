@@ -427,6 +427,59 @@ app.get('/get-maintenance-status', (req, res) => {
     res.json({ maintenanceMode: maintenanceMode });
 });
 
+// --- ENDPOINT: Validar y Registrar Licencia ---
+// Coloca este bloque EXACTAMENTE aquí, después de app.use(express.json())
+app.post('/validate-and-register-license', async (req, res) => {
+    const { licenseKey } = req.body;
+    const clientIp = req.ip; 
+    // const clientIp = req.headers['x-forwarded-for'] || req.ip; // Considera esta línea para la IP real del cliente en Render
+
+    if (!licenseKey) {
+        return res.status(400).json({ valid: false, message: "La clave de licencia es requerida." });
+    }
+
+    try {
+        const licensesData = await getSheetData(process.env.LICENSES_SHEET_NAME); // Usa la variable de entorno para el nombre de la hoja
+        const licenseRow = licensesData.find(row => row[0] === licenseKey);
+
+        if (!licenseRow) {
+            return res.status(404).json({ valid: false, message: "Licencia no encontrada." });
+        }
+
+        const currentIPs = licenseRow[3] ? licenseRow[3].split(',').filter(ip => ip.trim() !== '') : [];
+        const maxUniqueIps = licenseRow[2];
+        const activatedStatus = licenseRow[1];
+
+        const maxUniqueIpsNum = parseInt(maxUniqueIps, 10);
+
+        if (activatedStatus === 'TRUE' && !currentIPs.includes(clientIp)) {
+            if (currentIPs.length < maxUniqueIpsNum) {
+                currentIPs.push(clientIp);
+                await updateSheetCell(process.env.LICENSES_SHEET_NAME, licensesData.indexOf(licenseRow) + 1, 4, currentIPs.join(','));
+                console.log(`Licencia '${licenseKey}' activada para nueva IP: ${clientIp}. IPs registradas: ${currentIPs.length}/${maxUniqueIpsNum}`);
+                return res.json({ valid: true, message: "Licencia válida y activada para esta IP." });
+            } else {
+                console.log(`Licencia '${licenseKey}' ha alcanzado su límite de ${maxUniqueIpsNum} IPs únicas. Intento de uso por IP: ${clientIp}`);
+                return res.status(403).json({ valid: false, message: `Esta licencia ya ha sido activada por su número máximo de ${maxUniqueIpsNum} IPs diferentes.` });
+            }
+        } else if (activatedStatus === 'FALSE') {
+            currentIPs.push(clientIp);
+            await updateSheetCell(process.env.LICENSES_SHEET_NAME, licensesData.indexOf(licenseRow) + 1, 2, 'TRUE');
+            await updateSheetCell(process.env.LICENSES_SHEET_NAME, licensesData.indexOf(licenseRow) + 1, 4, currentIPs.join(','));
+            console.log(`Primera activación de licencia '${licenseKey}' por IP: ${clientIp}`);
+            return res.json({ valid: true, message: "Licencia válida y activada por primera vez para esta IP." });
+        } else if (activatedStatus === 'TRUE' && currentIPs.includes(clientIp)) {
+            console.log(`Licencia '${licenseKey}' ya activada para IP: ${clientIp}`);
+            return res.json({ valid: true, message: "Licencia válida y ya activada para esta IP." });
+        } else {
+            return res.status(400).json({ valid: false, message: "Estado de licencia no reconocido." });
+        }
+    } catch (error) {
+        console.error("Error durante la validación/registro de licencia en Sheets:", error);
+        return res.status(500).json({ valid: false, message: "Error interno del servidor." });
+    }
+});
+
 // --- NUEVO ENDPOINT: Generar Licencia ---
 app.post('/generate-license', async (req, res) => {
     // Autenticación de administrador: Requiere la ADMIN_API_KEY
