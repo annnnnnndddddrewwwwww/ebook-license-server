@@ -604,9 +604,6 @@ app.post('/generate-license', async (req, res) => {
 
 // Ruta de bienvenida para la raíz (si el frontend se sirve por separado o para verificación)
 app.get('/', (req, res) => {
-    // Esto se ejecutará si tu navegador accede a la URL base de tu Render.
-    // Si tu frontend está en la carpeta 'public', express.static ya lo sirve,
-    // pero esta ruta explícita asegura que `index.html` sea enviado.
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
