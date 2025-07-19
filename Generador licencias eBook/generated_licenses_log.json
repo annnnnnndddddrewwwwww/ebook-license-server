@@ -1,0 +1,27 @@
+[
+    {
+        "licenseKey": "4b1efe76-7818-4f0a-a661-f9c420a990ec",
+        "maxUniqueIps": 1,
+        "generatedAt": "2025-07-14T08:45:15.483Z",
+        "status": "invalidated",
+        "timestamp": "N/A (Antigua)"
+    },
+    {
+        "licenseKey": "b500281f-5cc0-42ec-b3ae-2cba5f679f9b",
+        "maxUniqueIps": 1,
+        "generatedAt": "2025-07-14T11:07:11.779653",
+        "status": "active",
+        "timestamp": "N/A (Antigua)"
+    },
+    {
+        "licenseKey": "95018242-4351-4dfc-947d-ee947bef8129",
+        "maxUniqueIps": 1,
+        "generatedAt": "2025-07-16T08:51:10.205491",
+        "timestamp": "N/A (Antigua)"
+    },
+    {
+        "licenseKey": "a7fa920c-69a4-46fc-9130-f5e9bcb42347",
+        "maxUniqueIps": 1,
+        "timestamp": "2025-07-19 18:43:18"
+    }
+]
