@@ -43,6 +43,16 @@ app.use(express.json()); // Middleware para parsear bodies JSON
 app.use(express.static(path.join(__dirname, 'public')));
 // --- Fin de adición ---
 
+// Ruta para verificar el estado del servidor (health check)
+app.get('/status', (req, res) => {
+    // Si el modo de mantenimiento está activo, puedes enviar un estado diferente o un mensaje específico.
+    // En este caso, siempre devolveremos 200 si la ruta es accesible.
+    if (maintenanceMode) {
+        return res.status(503).json({ status: 'unavailable', message: 'Server is currently under maintenance.' });
+    }
+    res.status(200).json({ status: 'ok', message: 'Server is up and running.' });
+});
+
 // --- Configuración de Google Sheets ---
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID; // ID de tu hoja de cálculo
 const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
