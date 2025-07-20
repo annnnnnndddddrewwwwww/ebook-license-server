@@ -9,10 +9,11 @@ const app = express();
 const port = process.env.PORT || 3000; // Puerto del servidor
 
 // Middleware
+// --- Configuración de CORS ---
 app.use(cors({
-    origin: ['https://mi-ebook-licencias.onrender.com', 'http://localhost:3000'], // Ajusta según tu dominio de frontend en Render
+    origin: 'https://ebook-nutricion-frontend.onrender.com', // <--- ¡CAMBIA ESTO A TU DOMINIO EXACTO DEL FRONTEND!
     methods: ['GET', 'POST'],
-    allowedHeaders: ['Content-Type'],
+    allowedHeaders: ['Content-Type']
 }));
 app.use(express.json()); // Para parsear el body de las peticiones JSON
 
