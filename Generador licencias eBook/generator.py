@@ -2,11 +2,11 @@ import customtkinter as ctk
 from tkinter import messagebox
 import requests
 import json
-import threading # For non-blocking UI during API calls
+import threading
 
 # --- Configuration ---
 # IMPORTANT: Replace with the actual URL of your server.js
-SERVER_URL = 'https://mi-ebook-licencias-api.onrender.com' # Your server URL
+SERVER_URL = 'https://mi-ebook-licencias-api.onrender.com' # Your server URL (example)
 
 # --- CustomTkinter Setup ---
 ctk.set_appearance_mode("System")  # Modes: "System" (default), "Dark", "Light"
@@ -19,264 +19,170 @@ def make_request(method, endpoint, data=None):
     headers = {'Content-Type': 'application/json'}
     try:
         if method == 'GET':
-            response = requests.get(url, headers=headers, timeout=10) # Added timeout
+            response = requests.get(url, headers=headers, timeout=10)
         elif method == 'POST':
-            response = requests.post(url, headers=headers, data=json.dumps(data), timeout=10) # Added timeout
+            response = requests.post(url, headers=headers, data=json.dumps(data), timeout=10)
         else:
             raise ValueError("Unsupported HTTP method")
 
         response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
         return response.json()
     except requests.exceptions.ConnectionError:
-        messagebox.showerror("Error de Conexión", f"No se pudo conectar al servidor en {SERVER_URL}. Asegúrate de que el servidor esté ejecutándose.")
+        messagebox.showerror("Error de Conexión", f"No se pudo conectar al servidor en {SERVER_URL}. Asegúrate de que el servidor esté funcionando y la URL sea correcta.")
         return None
     except requests.exceptions.Timeout:
-        messagebox.showerror("Tiempo de Espera", "La solicitud al servidor tardó demasiado. Inténtalo de nuevo.")
+        messagebox.showerror("Error de Tiempo de Espera", "La solicitud al servidor ha tardado demasiado. Por favor, intenta de nuevo.")
         return None
-    except requests.exceptions.HTTPError as http_err:
+    except requests.exceptions.HTTPError as err:
         try:
-            error_details = response.json()
-            messagebox.showerror("Error del Servidor", f"HTTP {response.status_code}: {error_details.get('message', 'Error desconocido del servidor.')}")
+            error_message = err.response.json().get('message', str(err))
         except json.JSONDecodeError:
-            messagebox.showerror("Error del Servidor", f"HTTP {response.status_code}: {http_err}. Respuesta no JSON: {response.text}")
+            error_message = err.response.text
+        messagebox.showerror("Error del Servidor", f"Error del servidor: {err.response.status_code} - {error_message}")
         return None
     except Exception as err:
-        messagebox.showerror("Error Inesperado", f"Ocurrió un error inesperado: {err}")
+        messagebox.showerror("Error Desconocido", f"Ocurrió un error inesperado: {err}")
         return None
 
-def generate_license_api(max_ips):
-    data = {'maxUniqueIps': max_ips}
-    return make_request('POST', 'generate-license', data)
+# --- Main Application Functions ---
 
-def invalidate_license_api(license_key):
-    data = {'license': license_key}
-    return make_request('POST', 'invalidate-license', data)
+# --- License Tab ---
+def generate_license_trigger():
+    user_name = name_entry.get()
+    user_email = email_entry.get()
 
-def get_licenses_api():
-    return make_request('GET', 'licenses')
-
-def get_users_api():
-    return make_request('GET', 'users')
-
-def set_maintenance_mode_api(state):
-    data = {'maintenanceMode': state}
-    return make_request('POST', 'set-maintenance-mode', data)
-
-def get_maintenance_status_api():
-    return make_request('GET', 'get-maintenance-status')
-
-# --- GUI Functions (Wrapped for Threading) ---
-
-def run_in_thread(func, *args):
-    """Runs a function in a separate thread to prevent UI freezing."""
-    threading.Thread(target=func, args=args, daemon=True).start()
-
-def generate_license_gui_threaded():
-    try:
-        max_ips = int(max_ips_entry.get())
-        if max_ips < 1:
-            messagebox.showerror("Error", "El límite de IPs únicas debe ser un número positivo.")
-            return
-
-        result = generate_license_api(max_ips)
-        if result and result.get('success'):
-            messagebox.showinfo("Éxito", f"Licencia generada: {result.get('license')}")
-            # Refresh the licenses list in the main thread after API call
-            root.after(0, view_licenses_gui)
-        elif result:
-            messagebox.showerror("Error al Generar", result.get('message', 'Error desconocido al generar la licencia.'))
-    except ValueError:
-        messagebox.showerror("Error", "Por favor, introduce un número válido para las IPs únicas.")
-
-def invalidate_license_gui_threaded():
-    license_key = invalidate_license_entry.get()
-    if not license_key:
-        messagebox.showerror("Error", "Por favor, introduce una clave de licencia para invalidar.")
+    if not user_name or not user_email:
+        messagebox.showwarning("Campos Vacíos", "Por favor, ingresa el nombre de usuario y el correo electrónico.")
         return
 
-    result = invalidate_license_api(license_key)
+    threading.Thread(target=generate_license_async, args=(user_name, user_email)).start()
+
+def generate_license_async(user_name, user_email):
+    result = make_request('POST', 'generate-license', {'userName': user_name, 'userEmail': user_email})
     if result and result.get('success'):
-        messagebox.showinfo("Éxito", result.get('message', 'Licencia invalidada con éxito.'))
-        # Refresh the licenses list in the main thread after API call
-        root.after(0, view_licenses_gui)
+        ctk.CTkLabel(license_tab, text=f"Licencia generada: {result['licenseKey']}", font=ctk.CTkFont(size=16, weight="bold"), text_color="green").pack(pady=10)
+        messagebox.showinfo("Éxito", result.get('message', 'Licencia generada con éxito.'))
+        # Clear fields and refresh data
+        name_entry.delete(0, ctk.END)
+        email_entry.delete(0, ctk.END)
+        refresh_data_trigger()
     elif result:
-        messagebox.showerror("Error al Invalidar", result.get('message', 'Error desconocido al invalidar la licencia.'))
+        messagebox.showerror("Error al Generar", result.get('message', 'Fallo al generar la licencia.'))
 
-def view_licenses_gui_threaded():
-    licenses_data = get_licenses_api()
-    licenses_text.delete("1.0", ctk.END) # Clear previous content
-    if licenses_data:
-        if not licenses_data:
-            licenses_text.insert(ctk.END, "No hay licencias registradas.\n")
-            return
+# --- Data View Tab ---
+def refresh_data_trigger():
+    threading.Thread(target=refresh_data_async).start()
 
-        licenses_text.insert(ctk.END, "--- Listado de Licencias ---\n\n")
-        for lic in licenses_data:
-            licenses_text.insert(ctk.END, f"Clave: {lic.get('licenseKey')}\n", "key_highlight") # Use a new tag for color
-            licenses_text.insert(ctk.END, f"  Máx IPs: {lic.get('maxUniqueIps')}\n")
-            activated_ips = ', '.join(lic.get('activatedIps', [])) or 'Ninguna'
-            licenses_text.insert(ctk.END, f"  IPs Activas: {activated_ips}\n")
-            
-            is_valid_text = 'Sí' if lic.get('isValid') else 'No'
-            valid_tag = "success" if lic.get('isValid') else "error"
-            licenses_text.insert(ctk.END, f"  Válida: {is_valid_text}\n", valid_tag)
-            
-            licenses_text.insert(ctk.END, f"  Último Uso: {lic.get('lastUsed')}\n")
-            licenses_text.insert(ctk.END, f"  Creada: {lic.get('createdAt')}\n")
-            licenses_text.insert(ctk.END, "----------------------------\n\n")
+def refresh_data_async():
+    licenses_data = make_request('GET', 'licenses')
+    users_data = make_request('GET', 'users')
+
+    root.after(0, lambda: update_data_display(licenses_data, users_data))
+
+def update_data_display(licenses_data, users_data):
+    # Clear previous data
+    for widget in licenses_frame.winfo_children():
+        widget.destroy()
+    for widget in users_frame.winfo_children():
+        widget.destroy()
+
+    # Display Licenses
+    ctk.CTkLabel(licenses_frame, text="LICENCIAS REGISTRADAS", font=ctk.CTkFont(size=18, weight="bold")).pack(pady=10)
+    if licenses_data and licenses_data.get('success') and licenses_data['licenses']:
+        # Header Row
+        ctk.CTkLabel(licenses_frame, text=f"{'Clave Licencia':<20} | {'Usuario':<20} | {'Email':<25} | {'Generado en':<20} | {'Expira en':<20}", font=ctk.CTkFont(weight="bold")).pack(anchor="w")
+        for lic in licenses_data['licenses']:
+            ctk.CTkLabel(licenses_frame, text=f"{lic['licenseKey']:<20} | {lic['userName']:<20} | {lic['userEmail']:<25} | {lic['generatedAt'].split('T')[0]:<20} | {lic['expiresAt'].split('T')[0]:<20}").pack(anchor="w")
     else:
-        licenses_text.insert(ctk.END, "Error al cargar licencias o no hay datos.\n")
+        ctk.CTkLabel(licenses_frame, text="No hay licencias registradas.", font=ctk.CTkFont(slant="italic")).pack(pady=5)
 
-def view_users_gui_threaded():
-    users_data = get_users_api()
-    users_text.delete("1.0", ctk.END) # Clear previous content
-    if users_data:
-        if not users_data:
-            users_text.insert(ctk.END, "No hay usuarios registrados.\n")
-            return
-
-        users_text.insert(ctk.END, "--- Listado de Usuarios ---\n\n")
-        for user in users_data:
-            users_text.insert(ctk.END, f"Email: {user.get('userEmail')}\n", "key_highlight") 
-            users_text.insert(ctk.END, f"  Nombre: {user.get('userName')}\n")
-            users_text.insert(ctk.END, f"  Licencia Asociada: {user.get('licenseKey')}\n")
-            users_text.insert(ctk.END, f"  Primer Acceso: {user.get('firstAccess')}\n")
-            users_text.insert(ctk.END, f"  Último Acceso: {user.get('lastAccess')}\n")
-            users_text.insert(ctk.END, "---------------------------\n\n")
+    # Display Users
+    ctk.CTkLabel(users_frame, text="USUARIOS REGISTRADOS", font=ctk.CTkFont(size=18, weight="bold")).pack(pady=10)
+    if users_data and users_data.get('success') and users_data['users']:
+        # Header Row
+        ctk.CTkLabel(users_frame, text=f"{'Usuario':<20} | {'Email':<25} | {'Registrado en':<20} | {'Email Bienvenida Enviado':<25}", font=ctk.CTkFont(weight="bold")).pack(anchor="w")
+        for user in users_data['users']:
+            welcome_status = "Sí" if user.get('welcomeEmailSent') == 'true' else "No"
+            ctk.CTkLabel(users_frame, text=f"{user['userName']:<20} | {user['userEmail']:<25} | {user['registeredAt'].split('T')[0]:<20} | {welcome_status:<25}").pack(anchor="w")
     else:
-        users_text.insert(ctk.END, "Error al cargar usuarios o no hay datos.\n")
+        ctk.CTkLabel(users_frame, text="No hay usuarios registrados.", font=ctk.CTkFont(slant="italic")).pack(pady=5)
 
-def set_maintenance_mode_gui_threaded():
-    current_state = maintenance_mode_var.get()
-    new_state = not current_state # Toggle the state
+# --- Maintenance Tab ---
+def get_maintenance_status_trigger():
+    threading.Thread(target=get_maintenance_status_async).start()
 
-    result = set_maintenance_mode_api(new_state)
-    if result and result.get('success'):
-        maintenance_mode_var.set(new_state)
-        messagebox.showinfo("Éxito", result.get('message'))
-        root.after(0, update_maintenance_status_label) # Update UI in main thread
-        root.after(0, update_maintenance_toggle_button) # Update button in main thread
-    elif result:
-        messagebox.showerror("Error", result.get('message'))
-
-def get_maintenance_status_gui_threaded():
-    status = get_maintenance_status_api()
-    if status is not None:
-        maintenance_mode_var.set(status.get('maintenanceMode', False))
-        root.after(0, update_maintenance_status_label) # Update UI in main thread
-        root.after(0, update_maintenance_toggle_button) # Update button in main thread
-    # Error message already handled by make_request
-
-# --- UI Update Callbacks (must be called from main thread) ---
-def view_licenses_gui():
-    run_in_thread(view_licenses_gui_threaded)
-
-def view_users_gui():
-    run_in_thread(view_users_gui_threaded)
-
-def generate_license_trigger():
-    run_in_thread(generate_license_gui_threaded)
-
-def invalidate_license_trigger():
-    run_in_thread(invalidate_license_gui_threaded)
+def get_maintenance_status_async():
+    global current_maintenance_state # <--- MOVED TO THE TOP
+    result = make_request('GET', 'get-maintenance-status')
+    if result:
+        current_maintenance_state = result.get('maintenanceMode', False)
+        root.after(0, update_maintenance_ui)
 
 def toggle_maintenance_trigger():
-    run_in_thread(set_maintenance_mode_gui_threaded)
+    threading.Thread(target=toggle_maintenance_async).start()
 
-def get_maintenance_status_trigger():
-    run_in_thread(get_maintenance_status_gui_threaded)
+def toggle_maintenance_async():
+    global current_maintenance_state # <--- MOVED TO THE TOP
+    new_state = not current_maintenance_state
+    result = make_request('POST', 'set-maintenance-mode', {'maintenanceMode': new_state})
+    if result and result.get('success'):
+        current_maintenance_state = new_state
+        root.after(0, update_maintenance_ui)
+        messagebox.showinfo("Éxito", result.get('message', f"Modo de mantenimiento cambiado a {new_state}"))
+    elif result:
+        messagebox.showerror("Error", result.get('message', "Fallo al cambiar el modo de mantenimiento."))
 
-def update_maintenance_status_label():
-    status_text = "ACTIVADO ✅" if maintenance_mode_var.get() else "DESACTIVADO ❌"
-    maintenance_status_label.configure(text=f"Modo Mantenimiento: {status_text}",
-                                       text_color="red" if maintenance_mode_var.get() else "green")
+def update_maintenance_ui():
+    status_text = "ACTIVO" if current_maintenance_state else "INACTIVO"
+    color = "red" if current_maintenance_state else "green"
+    button_text = "Desactivar Modo Mantenimiento" if current_maintenance_state else "Activar Modo Mantenimiento"
+    button_color = "red" if current_maintenance_state else "green"
 
-def update_maintenance_toggle_button():
-    if maintenance_mode_var.get():
-        maintenance_toggle_button.configure(text="Desactivar Modo Mantenimiento", fg_color="red", hover_color="#cc0000")
-    else:
-        maintenance_toggle_button.configure(text="Activar Modo Mantenimiento", fg_color="green", hover_color="#008000")
+    maintenance_status_label.configure(text=f"Modo Mantenimiento: {status_text}", text_color=color)
+    maintenance_toggle_button.configure(text=button_text, fg_color=button_color, hover_color=color) # Hover color should be consistent
 
-
-# --- Main Application Window Setup ---
+# --- UI Setup ---
 root = ctk.CTk()
-root.title("Ebook License Manager")
-root.geometry("900x750")
-root.resizable(True, True)
+root.title("Administración de Licencias y Usuarios Ebook")
+root.geometry("1000x700") # Increased width to accommodate new column
 
-# Create Tabs/Notebook
+# Tabs
 tabview = ctk.CTkTabview(root)
-tabview.pack(expand=True, fill="both", padx=20, pady=20)
+tabview.pack(padx=20, pady=20, expand=True, fill="both")
 
-# Add tabs
-license_tab = tabview.add("Gestión de Licencias")
-view_data_tab = tabview.add("Ver Datos")
+license_tab = tabview.add("Generar Licencia")
+data_tab = tabview.add("Ver Datos")
 maintenance_tab = tabview.add("Modo Mantenimiento")
 
-# --- License Management Tab ---
-# Generate License Section
-generate_frame = ctk.CTkFrame(license_tab, corner_radius=10)
-generate_frame.pack(pady=10, padx=10, fill="x", expand=True)
+# --- Generar Licencia Tab Content ---
+ctk.CTkLabel(license_tab, text="GENERAR NUEVA LICENCIA", font=ctk.CTkFont(size=20, weight="bold")).pack(pady=20)
 
-ctk.CTkLabel(generate_frame, text="Generar Nueva Licencia", font=ctk.CTkFont(size=16, weight="bold")).pack(pady=10)
-ctk.CTkLabel(generate_frame, text="Máximo de IPs Únicas:").pack(pady=5)
-max_ips_entry = ctk.CTkEntry(generate_frame, placeholder_text="Ej: 1")
-max_ips_entry.insert(0, "1") # Default value
-max_ips_entry.pack(pady=5, padx=20, fill="x")
-ctk.CTkButton(generate_frame, text="Generar Licencia", command=generate_license_trigger,
-              fg_color="#4A729E", hover_color="#375F8A").pack(pady=10) # Using primary colors
+ctk.CTkLabel(license_tab, text="Nombre de Usuario:").pack(pady=(10, 0))
+name_entry = ctk.CTkEntry(license_tab, width=300, placeholder_text="Nombre Completo")
+name_entry.pack(pady=5)
 
-# Separator
-ctk.CTkFrame(license_tab, height=2, fg_color="gray", corner_radius=0).pack(fill="x", pady=15, padx=10)
+ctk.CTkLabel(license_tab, text="Correo Electrónico:").pack(pady=(10, 0))
+email_entry = ctk.CTkEntry(license_tab, width=300, placeholder_text="correo@ejemplo.com")
+email_entry.pack(pady=5)
 
-# Invalidate License Section
-invalidate_frame = ctk.CTkFrame(license_tab, corner_radius=10)
-invalidate_frame.pack(pady=10, padx=10, fill="x", expand=True)
+generate_button = ctk.CTkButton(license_tab, text="Generar y Registrar Licencia", command=generate_license_trigger)
+generate_button.pack(pady=20)
 
-ctk.CTkLabel(invalidate_frame, text="Invalidar Licencia Existente", font=ctk.CTkFont(size=16, weight="bold")).pack(pady=10)
-ctk.CTkLabel(invalidate_frame, text="Clave de Licencia a Invalidar:").pack(pady=5)
-invalidate_license_entry = ctk.CTkEntry(invalidate_frame, placeholder_text="Introduce la clave de licencia")
-invalidate_license_entry.pack(pady=5, padx=20, fill="x")
-ctk.CTkButton(invalidate_frame, text="Invalidar Licencia", command=invalidate_license_trigger,
-              fg_color="#7091B8", hover_color="#5A7D9D").pack(pady=10) # Using secondary color
+# --- Ver Datos Tab Content ---
+data_frame = ctk.CTkScrollableFrame(data_tab, label_text="Datos del Servidor", corner_radius=10)
+data_frame.pack(padx=10, pady=10, expand=True, fill="both")
 
+licenses_frame = ctk.CTkFrame(data_frame, fg_color="transparent")
+licenses_frame.pack(pady=10, fill="x", expand=False)
 
-# --- View Data Tab ---
-# Licenses View
-licenses_view_frame = ctk.CTkFrame(view_data_tab, corner_radius=10)
-licenses_view_frame.pack(pady=10, padx=10, fill="both", expand=True)
+users_frame = ctk.CTkFrame(data_frame, fg_color="transparent")
+users_frame.pack(pady=10, fill="x", expand=False)
 
-ctk.CTkLabel(licenses_view_frame, text="Licencias Registradas", font=ctk.CTkFont(size=16, weight="bold")).pack(pady=10)
-licenses_text = ctk.CTkTextbox(licenses_view_frame, wrap="word", activate_scrollbars=True, height=250)
-licenses_text.pack(pady=10, padx=10, fill="both", expand=True)
+refresh_button = ctk.CTkButton(data_tab, text="Actualizar Datos", command=refresh_data_trigger)
+refresh_button.pack(pady=10)
 
-# Corrected tag_config: Use 'foreground' instead of 'text_color' for CTkTextbox tags
-licenses_text.tag_config("key_highlight", foreground="#4A729E") # Changed to foreground
-licenses_text.tag_config("success", foreground="green") # Changed to foreground
-licenses_text.tag_config("error", foreground="red") # Changed to foreground
-
-ctk.CTkButton(licenses_view_frame, text="Cargar Licencias", command=view_licenses_gui,
-              fg_color="#4A729E", hover_color="#375F8A").pack(pady=10)
-
-ctk.CTkFrame(view_data_tab, height=2, fg_color="gray", corner_radius=0).pack(fill="x", pady=15, padx=10)
-
-# Users View
-users_view_frame = ctk.CTkFrame(view_data_tab, corner_radius=10)
-users_view_frame.pack(pady=10, padx=10, fill="both", expand=True)
-
-ctk.CTkLabel(users_view_frame, text="Datos de Usuarios Registrados", font=ctk.CTkFont(size=16, weight="bold")).pack(pady=10)
-users_text = ctk.CTkTextbox(users_view_frame, wrap="word", activate_scrollbars=True, height=250)
-users_text.pack(pady=10, padx=10, fill="both", expand=True)
-# Corrected tag_config: Use 'foreground' instead of 'text_color'
-users_text.tag_config("key_highlight", foreground="#4A729E") # Changed to foreground
-
-ctk.CTkButton(users_view_frame, text="Cargar Usuarios", command=view_users_gui,
-              fg_color="#7091B8", hover_color="#5A7D9D").pack(pady=10)
-
-
-# --- Maintenance Mode Tab ---
-maintenance_mode_var = ctk.BooleanVar()
-maintenance_mode_var.set(False) # Initial state, will be updated from server
+# --- Modo Mantenimiento Tab Content ---
+current_maintenance_state = False # Initial state, will be updated from server
 
 maintenance_status_label = ctk.CTkLabel(maintenance_tab, text="Modo Mantenimiento: DESCONOCIDO",
                                          font=ctk.CTkFont(size=18, weight="bold"),
@@ -299,7 +205,9 @@ ctk.CTkButton(maintenance_tab, text="Actualizar Estado Manualmente", command=get
 
 
 # Initialize maintenance mode status when app starts (in a thread)
-root.after(100, get_maintenance_status_trigger) # Run after 100ms to allow GUI to set up
+root.after(100, get_maintenance_status_trigger) # Run after 100ms
 
-# Start the application
+# Initial data load
+root.after(100, refresh_data_trigger) # Load data after a short delay
+
 root.mainloop()
