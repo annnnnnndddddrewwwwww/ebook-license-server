@@ -48,23 +48,29 @@ def make_request(method, endpoint, data=None):
 
 # --- License Tab ---
 def generate_license_trigger():
-    user_name = name_entry.get()
-    user_email = email_entry.get()
+    max_ips_str = max_ips_entry.get()
 
-    if not user_name or not user_email:
-        messagebox.showwarning("Campos Vacíos", "Por favor, ingresa el nombre de usuario y el correo electrónico.")
+    if not max_ips_str:
+        messagebox.showwarning("Campo Vacío", "Por favor, ingresa el número máximo de IPs.")
         return
 
-    threading.Thread(target=generate_license_async, args=(user_name, user_email)).start()
+    try:
+        max_ips = int(max_ips_str)
+        if max_ips < 1:
+            raise ValueError("El número de IPs debe ser al menos 1.")
+    except ValueError as e:
+        messagebox.showwarning("Entrada Inválida", f"Máximo de IPs debe ser un número entero positivo. {e}")
+        return
 
-def generate_license_async(user_name, user_email):
-    result = make_request('POST', 'generate-license', {'userName': user_name, 'userEmail': user_email})
+    threading.Thread(target=generate_license_async, args=(max_ips,)).start()
+
+def generate_license_async(max_ips):
+    result = make_request('POST', 'generate-license', {'maxIPs': max_ips})
     if result and result.get('success'):
         ctk.CTkLabel(license_tab, text=f"Licencia generada: {result['licenseKey']}", font=ctk.CTkFont(size=16, weight="bold"), text_color="green").pack(pady=10)
         messagebox.showinfo("Éxito", result.get('message', 'Licencia generada con éxito.'))
         # Clear fields and refresh data
-        name_entry.delete(0, ctk.END)
-        email_entry.delete(0, ctk.END)
+        max_ips_entry.delete(0, ctk.END)
         refresh_data_trigger()
     elif result:
         messagebox.showerror("Error al Generar", result.get('message', 'Fallo al generar la licencia.'))
@@ -75,44 +81,48 @@ def refresh_data_trigger():
 
 def refresh_data_async():
     licenses_data = make_request('GET', 'licenses')
-    users_data = make_request('GET', 'users')
+    # Ya no solicitamos datos de usuarios si no los vamos a mostrar
+    # users_data = make_request('GET', 'users')
 
-    root.after(0, lambda: update_data_display(licenses_data, users_data))
+    root.after(0, lambda: update_data_display(licenses_data))
 
-def update_data_display(licenses_data, users_data):
+def update_data_display(licenses_data):
     # Clear previous data
     for widget in licenses_frame.winfo_children():
         widget.destroy()
-    for widget in users_frame.winfo_children():
-        widget.destroy()
+    # No hay necesidad de limpiar users_frame si lo eliminamos
 
     # Display Licenses
     ctk.CTkLabel(licenses_frame, text="LICENCIAS REGISTRADAS", font=ctk.CTkFont(size=18, weight="bold")).pack(pady=10)
     if licenses_data and licenses_data.get('success') and licenses_data['licenses']:
-        # Header Row
-        ctk.CTkLabel(licenses_frame, text=f"{'Clave Licencia':<20} | {'Usuario':<20} | {'Email':<25} | {'Generado en':<20} | {'Expira en':<20}", font=ctk.CTkFont(weight="bold")).pack(anchor="w")
+        # Header Row: LicenseKey, MaxIPs, UsedIPs, ExpiryDate
+        ctk.CTkLabel(licenses_frame, text=f"{'Clave Licencia':<20} | {'Max IPs':<10} | {'IPs Usadas':<35} | {'Expira en':<20}", font=ctk.CTkFont(weight="bold")).pack(anchor="w")
         for lic in licenses_data['licenses']:
-            ctk.CTkLabel(licenses_frame, text=f"{lic['licenseKey']:<20} | {lic['userName']:<20} | {lic['userEmail']:<25} | {lic['generatedAt'].split('T')[0]:<20} | {lic['expiresAt'].split('T')[0]:<20}").pack(anchor="w")
+            # Asegúrate de que los campos existan en la respuesta del servidor
+            license_key = lic.get('licenseKey', 'N/A')
+            max_ips = lic.get('maxIPs', 'N/A')
+            used_ips = ", ".join(lic.get('usedIPs', [])) if lic.get('usedIPs') else 'Ninguna'
+            expires_at = lic.get('expiresAt', 'N/A').split('T')[0]
+
+            ctk.CTkLabel(licenses_frame, text=f"{license_key:<20} | {str(max_ips):<10} | {used_ips:<35} | {expires_at:<20}").pack(anchor="w")
     else:
         ctk.CTkLabel(licenses_frame, text="No hay licencias registradas.", font=ctk.CTkFont(slant="italic")).pack(pady=5)
 
-    # Display Users
-    ctk.CTkLabel(users_frame, text="USUARIOS REGISTRADOS", font=ctk.CTkFont(size=18, weight="bold")).pack(pady=10)
-    if users_data and users_data.get('success') and users_data['users']:
-        # Header Row
-        ctk.CTkLabel(users_frame, text=f"{'Usuario':<20} | {'Email':<25} | {'Registrado en':<20} | {'Email Bienvenida Enviado':<25}", font=ctk.CTkFont(weight="bold")).pack(anchor="w")
-        for user in users_data['users']:
-            welcome_status = "Sí" if user.get('welcomeEmailSent') == 'true' else "No"
-            ctk.CTkLabel(users_frame, text=f"{user['userName']:<20} | {user['userEmail']:<25} | {user['registeredAt'].split('T')[0]:<20} | {welcome_status:<25}").pack(anchor="w")
-    else:
-        ctk.CTkLabel(users_frame, text="No hay usuarios registrados.", font=ctk.CTkFont(slant="italic")).pack(pady=5)
+    # NO MOSTRAMOS LA SECCIÓN DE USUARIOS REGISTRADOS
+    # for widget in users_frame.winfo_children():
+    #     widget.destroy()
+    # ctk.CTkLabel(users_frame, text="USUARIOS REGISTRADOS", font=ctk.CTkFont(size=18, weight="bold")).pack(pady=10)
+    # ctk.CTkLabel(users_frame, text="La gestión de usuarios ha sido eliminada de esta interfaz.", font=ctk.CTkFont(slant="italic")).pack(pady=5)
+
 
 # --- Maintenance Tab ---
+current_maintenance_state = False # Initial state, will be updated from server
+
 def get_maintenance_status_trigger():
     threading.Thread(target=get_maintenance_status_async).start()
 
 def get_maintenance_status_async():
-    global current_maintenance_state # <--- MOVED TO THE TOP
+    global current_maintenance_state # MOVED TO THE TOP
     result = make_request('GET', 'get-maintenance-status')
     if result:
         current_maintenance_state = result.get('maintenanceMode', False)
@@ -122,7 +132,7 @@ def toggle_maintenance_trigger():
     threading.Thread(target=toggle_maintenance_async).start()
 
 def toggle_maintenance_async():
-    global current_maintenance_state # <--- MOVED TO THE TOP
+    global current_maintenance_state # MOVED TO THE TOP
     new_state = not current_maintenance_state
     result = make_request('POST', 'set-maintenance-mode', {'maintenanceMode': new_state})
     if result and result.get('success'):
@@ -143,7 +153,7 @@ def update_maintenance_ui():
 
 # --- UI Setup ---
 root = ctk.CTk()
-root.title("Administración de Licencias y Usuarios Ebook")
+root.title("Administración de Licencias Ebook (IPs)")
 root.geometry("1000x700") # Increased width to accommodate new column
 
 # Tabs
@@ -151,39 +161,34 @@ tabview = ctk.CTkTabview(root)
 tabview.pack(padx=20, pady=20, expand=True, fill="both")
 
 license_tab = tabview.add("Generar Licencia")
-data_tab = tabview.add("Ver Datos")
+data_tab = tabview.add("Ver Licencias") # Renamed tab
 maintenance_tab = tabview.add("Modo Mantenimiento")
 
 # --- Generar Licencia Tab Content ---
 ctk.CTkLabel(license_tab, text="GENERAR NUEVA LICENCIA", font=ctk.CTkFont(size=20, weight="bold")).pack(pady=20)
 
-ctk.CTkLabel(license_tab, text="Nombre de Usuario:").pack(pady=(10, 0))
-name_entry = ctk.CTkEntry(license_tab, width=300, placeholder_text="Nombre Completo")
-name_entry.pack(pady=5)
-
-ctk.CTkLabel(license_tab, text="Correo Electrónico:").pack(pady=(10, 0))
-email_entry = ctk.CTkEntry(license_tab, width=300, placeholder_text="correo@ejemplo.com")
-email_entry.pack(pady=5)
+ctk.CTkLabel(license_tab, text="Número Máximo de IPs Permitidas:").pack(pady=(10, 0))
+max_ips_entry = ctk.CTkEntry(license_tab, width=300, placeholder_text="Ej: 3 (para 3 IPs simultáneas)")
+max_ips_entry.pack(pady=5)
 
 generate_button = ctk.CTkButton(license_tab, text="Generar y Registrar Licencia", command=generate_license_trigger)
 generate_button.pack(pady=20)
 
 # --- Ver Datos Tab Content ---
-data_frame = ctk.CTkScrollableFrame(data_tab, label_text="Datos del Servidor", corner_radius=10)
+data_frame = ctk.CTkScrollableFrame(data_tab, label_text="Datos de Licencias del Servidor", corner_radius=10)
 data_frame.pack(padx=10, pady=10, expand=True, fill="both")
 
 licenses_frame = ctk.CTkFrame(data_frame, fg_color="transparent")
 licenses_frame.pack(pady=10, fill="x", expand=False)
 
-users_frame = ctk.CTkFrame(data_frame, fg_color="transparent")
-users_frame.pack(pady=10, fill="x", expand=False)
+# Ya no necesitamos users_frame si eliminamos la sección de usuarios
+# users_frame = ctk.CTkFrame(data_frame, fg_color="transparent")
+# users_frame.pack(pady=10, fill="x", expand=False)
 
-refresh_button = ctk.CTkButton(data_tab, text="Actualizar Datos", command=refresh_data_trigger)
+refresh_button = ctk.CTkButton(data_tab, text="Actualizar Datos de Licencias", command=refresh_data_trigger)
 refresh_button.pack(pady=10)
 
 # --- Modo Mantenimiento Tab Content ---
-current_maintenance_state = False # Initial state, will be updated from server
-
 maintenance_status_label = ctk.CTkLabel(maintenance_tab, text="Modo Mantenimiento: DESCONOCIDO",
                                          font=ctk.CTkFont(size=18, weight="bold"),
                                          text_color="gray")
