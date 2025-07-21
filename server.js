@@ -166,10 +166,13 @@ app.post('/generate-license', async (req, res) => {
 app.post('/validate-and-register-license', async (req, res) => {
     const { licenseKey } = req.body;
 
-    // *** Esta validación es del BACKEND. Si el frontend envía una clave vacía, el backend la detectará. ***
-    if (!licenseKey) {
-        return res.status(400).json({ success: false, message: 'La clave de licencia proporcionada está vacía.' });
-    }
+    // *** MODIFICACIÓN AQUÍ: SE ELIMINA LA VALIDACIÓN EXPLÍCITA DE CLAVE VACÍA EN EL BACKEND ***
+    // Si licenseKey es nula o vacía, la lógica de búsqueda de licencia abajo simplemente no la encontrará,
+    // y devolverá "Licencia inválida." lo cual es un comportamiento deseado.
+    // if (!licenseKey) {
+    //     return res.status(400).json({ success: false, message: 'La clave de licencia proporcionada está vacía.' });
+    // }
+    // ******************************************************************************************
 
     if (maintenanceMode) {
         console.log(`Validación de licencia '${licenseKey}' en modo mantenimiento.`);
@@ -189,8 +192,10 @@ app.post('/validate-and-register-license', async (req, res) => {
 
         if (licenses) {
             for (let i = 0; i < licenses.length; i++) {
-                if (licenses[i][0] === licenseKey) {
+                // Asegúrate de comparar solo si row[0] existe para evitar errores con filas vacías
+                if (licenses[i][0] && licenses[i][0] === licenseKey) {
                     licenseFound = true;
+                    // Asegúrate de que licenses[i][1] exista antes de comparar
                     licenseUsed = (licenses[i][1] === 'TRUE');
                     rowIndex = i;
                     break;
@@ -304,8 +309,6 @@ app.post('/send-welcome-on-login', async (req, res) => {
         return res.status(400).json({ success: false, message: 'Nombre de usuario y correo electrónico son requeridos para enviar el email de bienvenida.' });
     }
 
-    // Aquí puedes añadir lógica para guardar el usuario en Google Sheets (en la hoja 'Users')
-    // para llevar un registro de quién accede.
     try {
         const registeredAt = new Date().toISOString();
         const userId = uuidv4(); // Genera un ID único para el usuario
@@ -323,7 +326,6 @@ app.post('/send-welcome-on-login', async (req, res) => {
     } catch (sheetError) {
         console.error('Error al registrar el usuario en Google Sheets:', sheetError.message);
     }
-
 
     const mailOptions = {
         from: process.env.EMAIL_USER,
