@@ -145,13 +145,15 @@ app.post('/generate-license', async (req, res) => {
     const createdAt = new Date().toISOString();
 
     try {
+        // *** CAMBIO AQUÍ: Formato de columnas para el APPEND (Col A, B, C, D, E) ***
+        // Columnas: licenseKey, MaxIPs (ej. 1), isUsed (FALSE), ExpiryDate (vacío), createdAt
         await sheets.spreadsheets.values.append({
             spreadsheetId: GOOGLE_SHEET_ID,
-            range: `${LICENSES_SHEET_NAME}!A:C`,
+            range: `${LICENSES_SHEET_NAME}!A:E`, // Se expande el rango a la Columna E
             valueInputOption: 'RAW',
             requestBody: {
                 values: [
-                    [newLicenseKey, 'FALSE', createdAt]
+                    [newLicenseKey, '1', 'FALSE', '', createdAt] // MaxIPs por defecto a 1, ExpiryDate vacío, isUsed a FALSE
                 ],
             },
         });
@@ -166,23 +168,16 @@ app.post('/generate-license', async (req, res) => {
 app.post('/validate-and-register-license', async (req, res) => {
     const { licenseKey } = req.body;
 
-    // *** MODIFICACIÓN AQUÍ: SE ELIMINA LA VALIDACIÓN EXPLÍCITA DE CLAVE VACÍA EN EL BACKEND ***
-    // Si licenseKey es nula o vacía, la lógica de búsqueda de licencia abajo simplemente no la encontrará,
-    // y devolverá "Licencia inválida." lo cual es un comportamiento deseado.
-    // if (!licenseKey) {
-    //     return res.status(400).json({ success: false, message: 'La clave de licencia proporcionada está vacía.' });
-    // }
-    // ******************************************************************************************
-
     if (maintenanceMode) {
         console.log(`Validación de licencia '${licenseKey}' en modo mantenimiento.`);
     }
 
     try {
         // 1. Buscar la licencia en la hoja 'Licenses'
+        // Rango ampliado para leer todas las columnas relevantes (hasta la E)
         const licenseResponse = await sheets.spreadsheets.values.get({
             spreadsheetId: GOOGLE_SHEET_ID,
-            range: `${LICENSES_SHEET_NAME}!A:B`,
+            range: `${LICENSES_SHEET_NAME}!A:E`,
         });
         const licenses = licenseResponse.data.values;
 
@@ -192,11 +187,12 @@ app.post('/validate-and-register-license', async (req, res) => {
 
         if (licenses) {
             for (let i = 0; i < licenses.length; i++) {
-                // Asegúrate de comparar solo si row[0] existe para evitar errores con filas vacías
+                // Asegúrate de comparar solo si row[0] existe
                 if (licenses[i][0] && licenses[i][0] === licenseKey) {
                     licenseFound = true;
-                    // Asegúrate de que licenses[i][1] exista antes de comparar
-                    licenseUsed = (licenses[i][1] === 'TRUE');
+                    // *** CAMBIO AQUÍ: isUsed ahora está en el índice 2 (Columna C) ***
+                    // Asegúrate de que licenses[i][2] exista antes de comparar
+                    licenseUsed = (licenses[i][2] === 'TRUE');
                     rowIndex = i;
                     break;
                 }
@@ -213,9 +209,10 @@ app.post('/validate-and-register-license', async (req, res) => {
 
         // 2. Si la licencia es válida y no usada, marcarla como usada
         if (rowIndex !== -1) {
+            // *** CAMBIO AQUÍ: La columna a actualizar para isUsed es la 'C' (índice de hoja 2) ***
             await sheets.spreadsheets.values.update({
                 spreadsheetId: GOOGLE_SHEET_ID,
-                range: `${LICENSES_SHEET_NAME}!B${rowIndex + 1}`,
+                range: `${LICENSES_SHEET_NAME}!C${rowIndex + 1}`, // Actualiza la Columna C
                 valueInputOption: 'RAW',
                 requestBody: {
                     values: [['TRUE']],
@@ -237,16 +234,20 @@ app.post('/validate-and-register-license', async (req, res) => {
 // Endpoint para obtener todas las licencias (solo para administración)
 app.get('/licenses', async (req, res) => {
     try {
+        // Rango ampliado para obtener todas las columnas relevantes (hasta la E)
         const response = await sheets.spreadsheets.values.get({
             spreadsheetId: GOOGLE_SHEET_ID,
-            range: `${LICENSES_SHEET_NAME}!A:C`,
+            range: `${LICENSES_SHEET_NAME}!A:E`,
         });
         const licenses = response.data.values;
         if (licenses && licenses.length > 0) {
+            // Se asume que la primera fila son encabezados y se omiten con .slice(1)
             const formattedLicenses = licenses.slice(1).map(row => ({
-                licenseKey: row[0],
-                isUsed: row[1] === 'TRUE',
-                createdAt: row[2]
+                licenseKey: row[0] || '', // Col A
+                maxIPs: row[1] || '',     // Col B
+                isUsed: (row[2] === 'TRUE'), // Col C - CAMBIO AQUÍ
+                expiryDate: row[3] || '', // Col D
+                createdAt: row[4] || ''   // Col E - CAMBIO AQUÍ
             }));
             res.json({ success: true, licenses: formattedLicenses });
         } else {
@@ -301,7 +302,7 @@ app.get('/get-maintenance-status', (req, res) => {
 });
 
 
-// Endpoint: Send Welcome Email on Login (Modificado para solo texto)
+// Endpoint: Send Welcome Email on Login
 app.post('/send-welcome-on-login', async (req, res) => {
     const { userName, userEmail } = req.body;
 
@@ -326,6 +327,7 @@ app.post('/send-welcome-on-login', async (req, res) => {
     } catch (sheetError) {
         console.error('Error al registrar el usuario en Google Sheets:', sheetError.message);
     }
+
 
     const mailOptions = {
         from: process.env.EMAIL_USER,
