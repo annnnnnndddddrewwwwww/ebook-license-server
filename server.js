@@ -1,9 +1,9 @@
 // server.js
-require('dotenv').config();
+require('dotenv').config(); // Carga las variables de entorno desde .env (solo para desarrollo local)
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const cors = require('cors');
-const { google } = require('googleapis');
+const { google } = require('googleapis'); // Importa googleapis
 const nodemailer = require('nodemailer'); // <--- Importa Nodemailer
 
 const app = express();
@@ -11,7 +11,7 @@ const port = process.env.PORT || 3000;
 
 // --- Configuración de CORS ---
 app.use(cors({
-    origin: '*',
+    origin: '*', // Permite cualquier origen. PARA PRODUCCIÓN, REEMPLAZA CON TU DOMINIO REAL.
     methods: ['GET', 'POST'],
     allowedHeaders: ['Content-Type']
 }));
@@ -19,28 +19,28 @@ app.use(cors({
 app.use(express.json());
 
 // --- Configuración de Google Sheets ---
-const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
+const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID; // ID de tu hoja de cálculo
 const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n');
+const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'); // Reemplazar \\n por \n
 
-const LICENSES_SHEET_NAME = 'Licenses';
-const USERS_SHEET_NAME = 'Users';
-const APP_CONFIG_SHEET_NAME = 'AppConfig';
+const LICENSES_SHEET_NAME = 'Licenses'; // Nombre de la pestaña para licencias
+const USERS_SHEET_NAME = 'Users';       // Nombre de la pestaña para usuarios
+const APP_CONFIG_SHEET_NAME = 'AppConfig'; // Nombre de la pestaña para configuración de la app
 
-let sheets;
+let sheets; // Variable global para el cliente de Google Sheets
 let maintenanceMode = false; // Estado inicial del modo de mantenimiento
 
 // --- Configuración de Nodemailer (para el envío de correos) ---
-// Configura un "transporter" SMTP. Puedes usar Gmail, un servidor custom, etc.
+// Configura un "transporter" SMTP. Puedes usar 'gmail' o especificar host, port, secure para otros SMTP
 const transporter = nodemailer.createTransport({
-    service: 'gmail', // Puedes usar 'gmail' o especificar host, port, secure para otros SMTP
+    service: 'gmail', // Ejemplo: 'gmail'. Para otros servicios, busca su configuración SMTP.
     auth: {
         user: process.env.EMAIL_USER,    // Tu dirección de correo (ej. de Gmail)
         pass: process.env.EMAIL_PASS    // Tu contraseña de aplicación (para Gmail, no la contraseña de tu cuenta)
     }
 });
 
-// Función para enviar correo de bienvenida
+// --- Función para enviar correo de bienvenida ---
 async function sendWelcomeEmail(userName, userEmail, licenseKey) {
     try {
         const mailOptions = {
@@ -51,7 +51,7 @@ async function sendWelcomeEmail(userName, userEmail, licenseKey) {
                 <p>Hola <strong>${userName}</strong>,</p>
                 <p>¡Muchas gracias por adquirir tu licencia para nuestro Ebook!</p>
                 <p>Tu clave de licencia es: <strong>${licenseKey}</strong></p>
-                <p>Puedes acceder a tu Ebook en: <a href="https://ebook-nutricion-frontend.onrender.com">TU_URL_DEL_EBOOK</a></p>
+                <p>Puedes acceder a tu Ebook en: <a href="TU_URL_DEL_EBOOK">TU_URL_DEL_EBOOK</a></p>
                 <p>Esperamos que disfrutes de esta valiosa información.</p>
                 <p>Saludos cordiales,</p>
                 <p>El Equipo de [Tu Nombre/Empresa]</p>
@@ -64,12 +64,11 @@ async function sendWelcomeEmail(userName, userEmail, licenseKey) {
         console.log(`Correo de bienvenida enviado a ${userEmail}`);
     } catch (error) {
         console.error(`Error al enviar correo de bienvenida a ${userEmail}:`, error);
+        throw error; // Propaga el error para que el endpoint pueda manejarlo
     }
 }
 
-// ... (resto de tu código de inicialización de Google Sheets) ...
-
-// Función para inicializar Google Sheets
+// --- Función para inicializar Google Sheets ---
 async function initGoogleSheets() {
     try {
         const auth = new google.auth.GoogleAuth({
@@ -95,7 +94,7 @@ async function initGoogleSheets() {
     }
 }
 
-// Helper para obtener un valor de configuración
+// --- Helper para obtener un valor de configuración ---
 async function getAppConfigValue(key) {
     try {
         const response = await sheets.spreadsheets.values.get({
@@ -114,7 +113,7 @@ async function getAppConfigValue(key) {
     }
 }
 
-// Helper para establecer un valor de configuración
+// --- Helper para establecer un valor de configuración ---
 async function setAppConfigValue(key, value) {
     try {
         const response = await sheets.spreadsheets.values.get({
@@ -155,7 +154,8 @@ async function setAppConfigValue(key, value) {
 }
 
 
-// --- Endpoint para generar una licencia (con envío de correo) ---
+// --- Endpoint para generar una licencia ---
+// NOTA: Este endpoint ya NO envía el correo de bienvenida. Solo genera la licencia y registra al usuario.
 app.post('/generate-license', async (req, res) => {
     if (maintenanceMode) {
         return res.status(503).json({ success: false, message: 'El servidor está en modo de mantenimiento. Inténtalo de nuevo más tarde.' });
@@ -181,17 +181,12 @@ app.post('/generate-license', async (req, res) => {
         });
         const existingUsers = userCheckResponse.data.values;
         if (existingUsers && existingUsers.some(row => row[0] === userEmail)) {
-            // Si el usuario ya existe, no generamos una nueva licencia, pero podríamos reenviar la existente
-            console.log(`Usuario ${userEmail} ya existe.`);
-            // Opcional: buscar la licencia existente para este usuario y devolverla/reenviarla
-            // Por simplicidad, aquí solo indicamos que ya existe.
             return res.status(409).json({ success: false, message: 'Este correo electrónico ya tiene una licencia asociada.' });
         }
 
         // Generar una nueva licencia
         const licenseKey = uuidv4().replace(/-/g, '').substring(0, 16).toUpperCase(); // Licencia de 16 caracteres alfanuméricos
 
-        // Registrar en Google Sheets
         const now = new Date();
         const timestamp = now.toISOString(); // Formato ISO 8601
         const expiryDate = new Date(now.setFullYear(now.getFullYear() + 1)).toISOString(); // Válida por 1 año
@@ -206,23 +201,20 @@ app.post('/generate-license', async (req, res) => {
             }
         });
 
-        // Guardar en la pestaña 'Users' (si aún no existe)
+        // Guardar en la pestaña 'Users' - AHORA CON 'false' PARA welcomeEmailSent
+        // Asegúrate de que tu hoja "Users" tenga una cuarta columna (D) para este valor.
         await sheets.spreadsheets.values.append({
             spreadsheetId: GOOGLE_SHEET_ID,
-            range: `${USERS_SHEET_NAME}!A:C`,
+            range: `${USERS_SHEET_NAME}!A:D`, // A:D para incluir la nueva columna
             valueInputOption: 'RAW',
             resource: {
-                values: [[userName, userEmail, timestamp]]
+                values: [[userName, userEmail, timestamp, 'false']] // 'false' indica que el correo no ha sido enviado
             }
         });
 
-        console.log(`Licencia generada y registrada: ${licenseKey} para ${userEmail}`);
+        console.log(`Licencia generada y registrada: ${licenseKey} para ${userEmail}. Correo de bienvenida pendiente.`);
 
-        // --- ENVIAR CORREO DE BIENVENIDA AQUÍ ---
-        await sendWelcomeEmail(userName, userEmail, licenseKey);
-        // ----------------------------------------
-
-        res.json({ success: true, message: 'Licencia generada y registrada con éxito. ¡Revisa tu correo!', licenseKey: licenseKey });
+        res.json({ success: true, message: 'Licencia generada y registrada con éxito. Por favor, inicia sesión para acceder.', licenseKey: licenseKey });
 
     } catch (error) {
         console.error('Error al generar o registrar la licencia:', error);
@@ -231,9 +223,9 @@ app.post('/generate-license', async (req, res) => {
 });
 
 
-// ... (resto de tus endpoints: /validate-and-register-license, /licenses, /users, /set-maintenance-mode, /get-maintenance-status) ...
-
-// --- Endpoint para validar y registrar una licencia (modificado para no generar ni enviar correo aquí si ya lo hizo generate-license) ---
+// --- Endpoint para validar y registrar una licencia ---
+// NOTA: Este endpoint solo valida la licencia y devuelve la información del usuario.
+// No registra nuevos usuarios (eso lo hace /generate-license) y no envía el correo de bienvenida.
 app.post('/validate-and-register-license', async (req, res) => {
     if (maintenanceMode) {
         return res.status(503).json({ success: false, message: 'El servidor está en modo de mantenimiento. Inténtalo de nuevo más tarde.' });
@@ -261,6 +253,7 @@ app.post('/validate-and-register-license', async (req, res) => {
         let isValid = false;
         let currentUserName = '';
         let currentUserEmail = '';
+        let associatedLicenseKey = ''; // Variable para guardar la clave de licencia asociada
 
         if (licenses) {
             for (const row of licenses) {
@@ -274,6 +267,7 @@ app.post('/validate-and-register-license', async (req, res) => {
                         isValid = true;
                         currentUserName = storedUserName;
                         currentUserEmail = storedUserEmail;
+                        associatedLicenseKey = storedLicenseKey; // Guarda la clave de licencia
                     }
                     break;
                 }
@@ -281,34 +275,8 @@ app.post('/validate-and-register-license', async (req, res) => {
         }
 
         if (licenseFound && isValid) {
-            // Si la licencia es válida, actualiza o añade el usuario si los datos son diferentes
-            // (Esta lógica se simplificó, ya que `/generate-license` ya registra al usuario)
-            // Aquí, simplemente aseguramos que el usuario esté en la hoja de Users si no lo estaba
-            // o actualizamos sus datos si han cambiado.
-            const userCheckResponse = await sheets.spreadsheets.values.get({
-                spreadsheetId: GOOGLE_SHEET_ID,
-                range: `${USERS_SHEET_NAME}!B:B`, // Columna B para email
-            });
-            const existingUsers = userCheckResponse.data.values;
-            const userExists = existingUsers && existingUsers.some(row => row[0] === userEmail);
-
-            if (!userExists) {
-                await sheets.spreadsheets.values.append({
-                    spreadsheetId: GOOGLE_SHEET_ID,
-                    range: `${USERS_SHEET_NAME}!A:C`,
-                    valueInputOption: 'RAW',
-                    resource: {
-                        values: [[userName, userEmail, new Date().toISOString()]]
-                    }
-                });
-                console.log(`Nuevo usuario registrado durante la validación: ${userName}, ${userEmail}`);
-            } else {
-                // Opcional: Lógica para actualizar nombre/email si han cambiado para un usuario existente
-                // Esto requeriría buscar la fila del usuario y actualizarla
-                console.log(`Usuario ${userEmail} ya registrado.`);
-            }
-
-            res.json({ success: true, message: 'Licencia válida. Acceso concedido.', userName: currentUserName, userEmail: currentUserEmail });
+            // Licencia válida: devuelve los datos del usuario asociado a esa licencia
+            res.json({ success: true, message: 'Licencia válida. Acceso concedido.', userName: currentUserName, userEmail: currentUserEmail, licenseKey: associatedLicenseKey });
         } else if (licenseFound && !isValid) {
             res.status(403).json({ success: false, message: 'La licencia ha expirado. Por favor, contacta al soporte.' });
         } else {
@@ -322,7 +290,79 @@ app.post('/validate-and-register-license', async (req, res) => {
 });
 
 
-// Endpoint para obtener todas las licencias (solo para administración)
+// --- NUEVO ENDPOINT: Para enviar correo de bienvenida al inicio de sesión ---
+// Este endpoint se llama desde el frontend DESPUÉS de una validación exitosa de licencia.
+// Envía el correo SÓLO UNA VEZ por usuario.
+app.post('/send-welcome-on-login', async (req, res) => {
+    const { userEmail, userName, licenseKey } = req.body;
+
+    if (!userEmail || !userName || !licenseKey) {
+        return res.status(400).json({ success: false, message: 'Se requieren correo, nombre de usuario y clave de licencia.' });
+    }
+
+    try {
+        // 1. Buscar al usuario en la hoja 'Users' para verificar si el correo ya fue enviado
+        const response = await sheets.spreadsheets.values.get({
+            spreadsheetId: GOOGLE_SHEET_ID,
+            range: `${USERS_SHEET_NAME}!A:D`, // Ahora A:D para leer 'welcomeEmailSent'
+        });
+
+        let users = response.data.values;
+        let userRowIndex = -1;
+        let welcomeEmailSent = 'false'; // Valor por defecto si la columna no existe o está vacía
+
+        if (users && users.length > 0) {
+            // La primera fila son los encabezados, los datos de usuario empiezan desde la fila 2 (índice 1 en array)
+            for (let i = 0; i < users.length; i++) {
+                // Compara el email (columna B, índice 1)
+                if (users[i][1] === userEmail) {
+                    // +1 porque la hoja es base 1
+                    userRowIndex = i + 1; // Guarda el número de fila en la hoja de Google Sheets
+                    // welcomeEmailSent está en la columna D (índice 3)
+                    welcomeEmailSent = users[i][3] || 'false'; // Si la columna está vacía, asume 'false'
+                    break;
+                }
+            }
+        }
+
+        if (userRowIndex === -1) {
+            // Esto no debería ocurrir si /generate-license siempre registra usuarios.
+            // Si el usuario no se encuentra, no se puede enviar el correo (o se podría añadir y enviar, pero el flujo es que ya existe).
+            console.warn(`Intento de enviar correo de bienvenida a usuario no registrado en hoja de Users: ${userEmail}`);
+            return res.status(404).json({ success: false, message: 'Usuario no encontrado en la base de datos de usuarios.' });
+        }
+
+        if (welcomeEmailSent === 'true') {
+            console.log(`Correo de bienvenida ya enviado a ${userEmail}. No se reenvía.`);
+            return res.json({ success: true, message: 'Correo de bienvenida ya enviado.' });
+        } else {
+            // El correo no ha sido enviado, procede a enviarlo
+            await sendWelcomeEmail(userName, userEmail, licenseKey);
+
+            // Actualiza el estado en Google Sheets a 'true' para este usuario
+            // userRowIndex ya es el número de fila real en la hoja (base 1)
+            const rangeToUpdate = `${USERS_SHEET_NAME}!D${userRowIndex}`; // Columna D, fila de userRowIndex
+            await sheets.spreadsheets.values.update({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                range: rangeToUpdate,
+                valueInputOption: 'RAW',
+                resource: {
+                    values: [['true']],
+                },
+            });
+            console.log(`Estado de envío de correo de bienvenida actualizado a 'true' para ${userEmail}`);
+
+            return res.json({ success: true, message: 'Correo de bienvenida enviado con éxito.' });
+        }
+
+    } catch (error) {
+        console.error('Error al manejar el envío de correo en inicio de sesión:', error);
+        res.status(500).json({ success: false, message: 'Error interno del servidor al enviar el correo de bienvenida.' });
+    }
+});
+
+
+// --- Endpoint para obtener todas las licencias (solo para administración) ---
 app.get('/licenses', async (req, res) => {
     try {
         const response = await sheets.spreadsheets.values.get({
@@ -350,12 +390,13 @@ app.get('/licenses', async (req, res) => {
     }
 });
 
-// Endpoint para obtener todos los usuarios (solo para administración)
+// --- Endpoint para obtener todos los usuarios (solo para administración) ---
+// Ahora incluye la columna 'welcomeEmailSent'
 app.get('/users', async (req, res) => {
     try {
         const response = await sheets.spreadsheets.values.get({
             spreadsheetId: GOOGLE_SHEET_ID,
-            range: `${USERS_SHEET_NAME}!A:C`,
+            range: `${USERS_SHEET_NAME}!A:D`, // Ahora A:D para leer 'welcomeEmailSent'
         });
         const users = response.data.values;
         if (users && users.length > 0) {
@@ -365,7 +406,8 @@ app.get('/users', async (req, res) => {
             res.json({ success: true, users: data.map(row => ({
                 userName: row[0],
                 userEmail: row[1],
-                registeredAt: row[2]
+                registeredAt: row[2],
+                welcomeEmailSent: row[3] || 'false' // Asegurarse de que exista el valor, por si la columna está vacía
             })) });
         } else {
             res.json({ success: true, users: [], message: 'No hay usuarios registrados.' });
@@ -376,7 +418,7 @@ app.get('/users', async (req, res) => {
     }
 });
 
-// Endpoint para establecer el modo de mantenimiento
+// --- Endpoint para establecer el modo de mantenimiento ---
 app.post('/set-maintenance-mode', async (req, res) => {
     const { maintenanceMode: newState } = req.body;
     if (typeof newState === 'boolean') {
@@ -389,16 +431,16 @@ app.post('/set-maintenance-mode', async (req, res) => {
     }
 });
 
-// Endpoint para obtener el estado del modo de mantenimiento
+// --- Endpoint para obtener el estado del modo de mantenimiento ---
 app.get('/get-maintenance-status', (req, res) => {
     res.json({ maintenanceMode: maintenanceMode });
 });
 
-// Ruta de bienvenida
+
+// Ruta de bienvenida (opcional, para verificar que el servidor está corriendo)
 app.get('/', (req, res) => {
     res.send('Servidor de licencias de Ebook funcionando con Google Sheets. Usa /generate-license para generar, /validate-and-register-license para validar, /licenses para ver todas las licencias y /users para ver los datos de usuario.');
 });
-
 
 // Iniciar el servidor después de inicializar Google Sheets
 initGoogleSheets().then(() => {
