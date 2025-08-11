@@ -1,17 +1,22 @@
 {
-  "name": "ebook-license-server",
+  "name": "your-license-server",
   "version": "1.0.0",
-  "description": "Server for Ebook license validation and user data collection",
+  "description": "A server for managing license keys.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
-    "dotenv": "^16.0.0",
+    "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "googleapis": "^120.0.0",
-    "nodemailer": "^7.0.5",
+    "google-auth-library": "^9.11.0",
+    "google-spreadsheet": "^4.1.2",
+    "nodemailer": "^6.9.14",
     "uuid": "^10.0.0"
-  }
+  },
+  "devDependencies": {},
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
 }
